@@ -11,7 +11,7 @@ import requests
 from sklearn.base import BaseEstimator, TransformerMixin
 
 # ==========================================
-# 1. 核心配置与字体加载 (SimHei)
+# 1. 核心配置与字体修复
 # ==========================================
 st.set_page_config(
     page_title="肺动脉高压风险预测系统",
@@ -19,178 +19,266 @@ st.set_page_config(
     layout="wide"
 )
 
-def configure_font():
+def configure_font_environment():
     """
-    下载 SimHei 字体并注册到 Matplotlib。
+    仅下载并注册 SimHei 字体，供后续绘图时按需调用。
     """
     font_filename = "SimHei.ttf"
     font_url = "https://cdn.jsdelivr.net/gh/StellarCN/scp_zh@master/fonts/SimHei.ttf"
 
-    # 1. 下载
+    # 1. 下载字体
     if not os.path.exists(font_filename):
-        with st.spinner("正在初始化字体资源..."):
+        with st.spinner("正在初始化中文字体环境 (SimHei)..."):
             try:
                 response = requests.get(font_url, timeout=10)
                 if response.status_code == 200:
                     with open(font_filename, "wb") as f:
                         f.write(response.content)
             except Exception as e:
-                st.warning(f"字体下载失败: {e}")
+                st.warning(f"字体下载异常: {e}")
 
-    # 2. 注册
+    # 2. 注册字体
     if os.path.exists(font_filename):
         try:
             fm.fontManager.addfont(font_filename)
-            # 全局设置为 SimHei，确保中文一定能显示
-            plt.rcParams['font.sans-serif'] = ['SimHei']
-            # 尝试软性关闭 Unicode 减号 (如果失效，下面有暴力修复兜底)
-            plt.rcParams['axes.unicode_minus'] = False
             return True
         except Exception:
             return False
     return False
 
-is_font_ready = configure_font()
+is_font_ready = configure_font_environment()
 
-# --- 自定义 CSS ---
+# --- 自定义 CSS (保持原样) ---
 st.markdown("""
     <style>
     .main { background-color: #f9f9f9; }
-    .report-box { border: 1px solid #e6e6e6; padding: 20px; background-color: white; border-radius: 10px; }
+    h1 { color: #2c3e50; font-weight: bold; font-family: sans-serif; }
+    h3 { color: #34495e; font-family: sans-serif; }
+    .stButton>button {
+        background-color: #007bff; color: white; border-radius: 5px; height: 3em; width: 100%; font-size: 16px;
+    }
+    .report-box {
+        border: 1px solid #e6e6e6; padding: 20px; background-color: white; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+    .threshold-info {
+        font-size: 12px; color: #666; text-align: center; margin-top: 5px;
+    }
     </style>
     """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. 模型加载
+# 2. 定义必要的类
 # ==========================================
 class DataFrameConverter(BaseEstimator, TransformerMixin):
+    def __init__(self): pass
     def fit(self, X, y=None): return self
     def transform(self, X): return pd.DataFrame(X)
 
+# ==========================================
+# 3. 加载模型与特征
+# ==========================================
 @st.cache_resource
 def load_model_and_features():
     try:
         model = joblib.load('final_model_RF.pkl')
+    except FileNotFoundError:
+        st.error("❌ 错误：未找到模型文件 'final_model_RF.pkl'。")
+        return None, None
+
+    try:
         with open('selected_features_1SE_建模数据.txt', 'r', encoding='utf-8') as f:
             content = f.read().strip()
             features = [x.strip() for x in (content.split(',') if ',' in content else content.split('\n'))]
-        return model, features
-    except:
+    except FileNotFoundError:
+        st.error("❌ 错误：未找到特征文件 'selected_features_1SE_建模数据.txt'。")
         return None, None
+        
+    return model, features
 
 model, feature_names = load_model_and_features()
 
 # ==========================================
-# 3. 侧边栏输入
+# 4. 侧边栏：输入界面
 # ==========================================
 if model and feature_names:
     st.sidebar.header("📋 患者参数录入")
+    st.sidebar.markdown("请在下方输入临床特征值：")
+    
     input_data = {}
     for feature in feature_names:
-        if any(x in feature.lower() for x in ['sex', 'gender', 'code']):
-            input_data[feature] = st.sidebar.selectbox(f"{feature}", [0, 1])
+        feature_lower = feature.lower()
+        if 'sex' in feature_lower or 'gender' in feature_lower or 'code' in feature_lower:
+            input_data[feature] = st.sidebar.selectbox(f"{feature} (分类变量)", options=[0, 1], index=0)
         else:
-            input_data[feature] = st.sidebar.number_input(f"{feature}", value=0.0, format="%.2f")
+            input_data[feature] = st.sidebar.number_input(f"{feature} (数值)", value=0.0, format="%.2f")
+
     input_df = pd.DataFrame([input_data], columns=feature_names)
+    
     st.sidebar.markdown("---")
-    st.sidebar.caption("✅ 字体状态：SimHei" if is_font_ready else "⚠️ 字体未加载")
+    if is_font_ready:
+        st.sidebar.caption("✅ 字体状态：SimHei (已加载)")
+    else:
+        st.sidebar.caption("⚠️ 字体状态：系统默认 (可能乱码)")
 
 # ==========================================
-# 4. 核心逻辑
+# 5. 主界面
 # ==========================================
-st.title("🏥 肺动脉高压风险预测系统")
+st.title("🏥 基于心磁成像装置的肺动脉高压检测计算器")
+st.markdown("基于机器学习随机森林算法构建 | 仅供科研参考")
 st.markdown("---")
 
-if st.sidebar.button("🔍 开始预测"):
-    if model:
-        with st.spinner('正在分析...'):
-            # --- 预测 ---
-            try:
-                prob = model.predict_proba(input_df)[0, 1]
-            except:
-                prob = 1.0 if model.predict(input_df)[0] == 1 else 0.0
+if st.sidebar.button("🔍 开始预测风险"):
+    if model and feature_names:
+        with st.spinner('正在计算模型预测概率与 SHAP 解释值，请稍候...'):
             
-            # --- SHAP ---
-            explanation = None
+            # A. 计算概率
             try:
-                # 兼容 Pipeline 和 Model
-                estimator = model._final_estimator if hasattr(model, '_final_estimator') else model
-                data = model[:-1].transform(input_df) if hasattr(model, '_final_estimator') else input_df
-                if hasattr(data, "toarray"): data = data.toarray()
-                data_df = pd.DataFrame(data, columns=feature_names) # 确保列名对齐
+                probability = model.predict_proba(input_df)[0, 1]
+            except:
+                prediction = model.predict(input_df)[0]
+                probability = 1.0 if prediction == 1 else 0.0
+
+            # B. 计算 SHAP
+            final_explanation = None
+            try:
+                if hasattr(model, 'steps') or hasattr(model, 'named_steps'):
+                    final_estimator = model._final_estimator
+                    preprocessor = model[:-1]
+                    processed_data = preprocessor.transform(input_df)
+                    if hasattr(processed_data, "toarray"):
+                        processed_data = processed_data.toarray()
+                    processed_data_df = pd.DataFrame(processed_data)
+                else:
+                    final_estimator = model
+                    processed_data_df = input_df
 
                 try:
-                    shap_values = shap.TreeExplainer(estimator)(data_df)
+                    explainer = shap.TreeExplainer(final_estimator)
+                    shap_values_obj = explainer(processed_data_df)
                 except:
-                    shap_values = shap.TreeExplainer(estimator, data=data_df, model_output="probability")(data_df)
+                    explainer = shap.TreeExplainer(final_estimator, data=processed_data_df, model_output="probability")
+                    shap_values_obj = explainer(processed_data_df)
 
-                # 提取数据
-                vals = shap_values.values[0, :, 1] if len(shap_values.values.shape) == 3 else shap_values.values[0]
-                base = shap_values.base_values[0, 1] if len(shap_values.values.shape) == 3 else shap_values.base_values[0]
-                
-                explanation = shap.Explanation(values=vals, base_values=base, data=input_df.iloc[0].values, feature_names=feature_names)
+                if shap_values_obj is not None:
+                    if len(shap_values_obj.values.shape) == 3:
+                        shap_contribution = shap_values_obj.values[0, :, 1]
+                        base_val = shap_values_obj.base_values[0, 1]
+                    else:
+                        shap_contribution = shap_values_obj.values[0]
+                        base_val = shap_values_obj.base_values[0]
+
+                    final_explanation = shap.Explanation(
+                        values=shap_contribution,
+                        base_values=base_val,
+                        data=input_df.iloc[0].values,
+                        feature_names=feature_names
+                    )
             except Exception as e:
-                st.error(f"SHAP error: {e}")
+                st.error(f"SHAP 计算模块出错: {str(e)}")
 
-            # --- 展示 ---
-            c1, c2 = st.columns([1, 2])
-            with c1:
-                risk = prob * 100
-                color = "#dc3545" if risk > 35.703 else "#28a745"
-                st.markdown(f"""
-                    <div class="report-box" style="border-left: 5px solid {color}; text-align: center;">
-                        <h2 style="color: {color}; font-size: 40px;">{risk:.1f}%</h2>
-                        <p>患病风险</p>
-                    </div>""", unsafe_allow_html=True)
+            # C. 结果展示 (完全恢复原来的代码逻辑)
+            col1, col2 = st.columns([1, 2])
 
-            with c2:
-                st.markdown("### SHAP 因子分析")
-                if explanation is not None:
+            with col1:
+                st.markdown("### 📊 预测风险评分")
+                risk_percent = probability * 100
+                
+                optimal_threshold = 35.703 
+                youden_index = 0.771
+
+                if risk_percent > optimal_threshold:
+                    color = "#dc3545"
+                    risk_label = "高风险 (High Risk)"
+                    icon = "⚠️"
+                    advice_box = "warning"
+                    advice_text = f"模型预测概率 ({risk_percent:.1f}%) 已超过最佳截断值 ({optimal_threshold:.1f}%)。\n\n**建议：** 考虑进行超声心动图或右心导管检查以进一步确诊。"
+                else:
+                    color = "#28a745"
+                    risk_label = "低风险 (Low Risk)"
+                    icon = "✅"
+                    advice_box = "success"
+                    advice_text = f"模型预测概率 ({risk_percent:.1f}%) 低于最佳截断值 ({optimal_threshold:.1f}%)。\n\n**建议：** 目前风险较低，建议按常规流程进行随访。"
+                
+                st.markdown(
+                    f"""
+                    <div class="report-box" style="text-align: center; border-left: 5px solid {color};">
+                        <h2 style="color: {color}; font-size: 50px; margin: 0;">{risk_percent:.1f}%</h2>
+                        <p style="color: gray; font-size: 14px; margin-bottom: 5px;">患病概率 (Probability)</p>
+                        <div class="threshold-info">
+                            Optimal Cut-off: {optimal_threshold:.3f}%<br>
+                            (Youden Index: {youden_index})
+                        </div>
+                        <hr style="margin: 15px 0;">
+                        <h3 style="color: {color}; margin: 0;">{icon} {risk_label}</h3>
+                    </div>
+                    """, 
+                    unsafe_allow_html=True
+                )
+                
+                st.markdown("### 🩺 决策建议")
+                if advice_box == "warning":
+                    st.warning(advice_text)
+                else:
+                    st.success(advice_text)
+
+            with col2:
+                st.markdown("### 🔍 SHAP 可解释性分析 (瀑布图)")
+                st.markdown("下图展示了各特征对预测结果的贡献：**红色**条表示增加风险，**蓝色**条表示降低风险。")
+                
+                if final_explanation is not None:
                     try:
-                        # 1. 基础绘图 (SimHei 环境)
+                        # =================================================
+                        # 🛑 终极字体修复方案 🛑
+                        # =================================================
+                        
+                        # 1. 创建画布
                         fig, ax = plt.subplots(figsize=(10, 6))
-                        shap.plots.waterfall(explanation, show=False, max_display=14)
                         
-                        # ========================================================
-                        # 🛡️ 终极修复：暴力遍历并替换字符 🛡️
-                        # 这段代码会检查图上的每一个字，把那个不显示的减号替换掉
-                        # ========================================================
+                        # 2. 基础绘图 (此时不用管乱码，先画出来)
+                        shap.plots.waterfall(final_explanation, show=False, max_display=14)
                         
-                        # 准备英文字体 (用于数字)
-                        english_font = fm.FontProperties(family='DejaVu Sans')
-                        
+                        # 3. 获取当前坐标轴
                         ax = plt.gca()
                         
-                        # 1. 修复 X 轴刻度 (底部数字)
-                        for label in ax.get_xticklabels():
-                            text = label.get_text()
-                            # 只要包含 Unicode 减号，就替换为 ASCII 连字符
-                            if '−' in text or '-' in text:
-                                # 强制设为英文字体
-                                label.set_fontproperties(english_font) 
-                                # 替换字符
-                                new_text = text.replace('−', '-') 
-                                label.set_text(new_text)
-
-                        # 2. 修复图内的数值标注 (柱子旁边的数字)
-                        for txt in ax.texts:
-                            text = txt.get_text()
-                            if '−' in text or '-' in text:
-                                txt.set_fontproperties(english_font)
-                                new_text = text.replace('−', '-')
-                                txt.set_text(new_text)
-                                
-                        # 3. (可选) 修复 X 轴标签
-                        xlabel = ax.xaxis.get_label()
-                        if '−' in xlabel.get_text():
-                             xlabel.set_fontproperties(english_font)
-                             xlabel.set_text(xlabel.get_text().replace('−', '-'))
-
-                        # 注意：Y 轴标签 (特征名) 我们不动它，让它保持 SimHei 显示中文
+                        # 4. 准备字体对象
+                        # A. SimHei: 用于中文特征名
+                        chinese_font = fm.FontProperties(fname="SimHei.ttf") if os.path.exists("SimHei.ttf") else fm.FontProperties(family='sans-serif')
+                        # B. DejaVu Sans: 用于所有数字，这个字体 100% 支持负号
+                        number_font = fm.FontProperties(family='DejaVu Sans')
                         
+                        # --- 修复步骤 I: Y 轴特征名 (设为 SimHei) ---
+                        for label in ax.get_yticklabels():
+                            label.set_fontproperties(chinese_font)
+                            label.set_fontsize(12) 
+
+                        # --- 修复步骤 II: X 轴刻度 (设为英文字体 + 替换符号) ---
+                        for label in ax.get_xticklabels():
+                            label.set_fontproperties(number_font) # 强制英文数字字体
+                            text = label.get_text()
+                            # 替换所有可能的减号为键盘连字符
+                            new_text = text.replace('−', '-').replace('\u2212', '-')
+                            label.set_text(new_text)
+
+                        # --- 修复步骤 III: 图内数值标注 (设为英文字体 + 替换符号) ---
+                        for txt in ax.texts:
+                            txt.set_fontproperties(number_font) # 强制英文数字字体
+                            text = txt.get_text()
+                            new_text = text.replace('−', '-').replace('\u2212', '-')
+                            txt.set_text(new_text)
+                        
+                        # --- 修复步骤 IV: X 轴标题 ---
+                        ax.set_xlabel(ax.get_xlabel(), fontproperties=number_font)
+
                         plt.tight_layout()
                         st.pyplot(fig)
-                    except Exception as e:
-                        st.error(f"绘图失败: {e}")
+                    except Exception as plot_err:
+                         st.error(f"绘图失败。调试信息: {plot_err}")
+                else:
+                    st.warning("无法生成 SHAP 图，请检查输入数据或模型结构。")
+            
+            st.markdown("---")
+            st.caption(f"**说明：** 本工具采用约登指数 (Youden Index = {youden_index}) 确定的最佳截断值 {optimal_threshold/100:.5f} 进行风险分层。结果仅供科研参考。")
+    else:
+        st.error("系统错误：模型未加载。")
 else:
-    st.info("等待输入...")
+    st.info("👈 请在左侧侧边栏输入患者的临床参数，然后点击“开始预测风险”按钮。")
