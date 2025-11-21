@@ -202,20 +202,55 @@ if st.sidebar.button("🔍 开始预测风险"):
                 else:
                     st.success(advice_text)
 
-            with col2:
+with col2:
                 st.markdown("### 🔍 SHAP 可解释性分析 (力图)")
                 st.markdown("下图展示了各特征如何推动风险值 **升高 (红色)** 或 **降低 (蓝色)**：")
                 
                 if shap_values_to_plot is not None:
                     try:
-                        fig, ax = plt.subplots(figsize=(12, 4))
-                        # 这里的 matplotlib=True 是关键，确保生成静态图
-                        shap.plots.force(shap_values_to_plot, matplotlib=True, show=False)
+                        # =================================================
+                        # 🛠️ 终极修复：手动拆解数据，绕过对象类型检查
+                        # =================================================
+                        
+                        # 1. 提取基准值 (Base Value)
+                        # 确保它是纯粹的浮点数 (float)，而不是数组
+                        base_value = shap_values_to_plot.base_values
+                        if isinstance(base_value, np.ndarray):
+                            base_value = base_value.item()
+                            
+                        # 2. 提取 SHAP 贡献值 (SHAP values)
+                        # 确保它是 numpy 数组
+                        shap_vals = shap_values_to_plot.values
+                        
+                        # 3. 提取特征原始值 (Feature values)
+                        # 强制转换为 numpy 纯数组，丢掉 Pandas 索引和表头
+                        features_display = shap_values_to_plot.data
+                        if hasattr(features_display, 'values'):
+                            features_display = features_display.values
+                        # 如果是多维的，展平成一维
+                        if isinstance(features_display, np.ndarray):
+                            features_display = features_display.flatten()
+                            
+                        # 4. 提取特征名称
+                        feature_names_display = shap_values_to_plot.feature_names
+                        
+                        # 5. 绘制力图 (使用 force_plot 而不是 plots.force)
+                        # 这种方式对数据类型最宽容
+                        fig = shap.force_plot(
+                            base_value, 
+                            shap_vals, 
+                            features_display, 
+                            feature_names=feature_names_display, 
+                            matplotlib=True, # 必须为 True 才能在 Streamlit 显示
+                            show=False
+                        )
+                        
+                        # 调整布局并展示
                         plt.tight_layout()
                         st.pyplot(fig)
+                        
                     except Exception as plot_err:
-                         # 更新了这里的报错提示
-                         st.error(f"绘图失败。这通常是由于数据类型不兼容(非数值)或字体配置引起的。详细信息: {plot_err}")
+                         st.error(f"绘图失败。这通常是由于数据类型不兼容(非数值)或字体配置引起的。\n\n错误详情: {plot_err}")
                 else:
                     st.warning("无法生成 SHAP 图，请检查输入数据或模型结构。")
             
@@ -225,3 +260,4 @@ if st.sidebar.button("🔍 开始预测风险"):
         st.error("系统错误：模型未加载。")
 else:
     st.info("👈 请在左侧侧边栏输入患者的临床参数，然后点击“开始预测风险”按钮。")
+
