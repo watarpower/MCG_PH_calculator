@@ -11,7 +11,7 @@ import requests
 from sklearn.base import BaseEstimator, TransformerMixin
 
 # ==========================================
-# 1. 核心配置与字体终极修复
+# 1. 核心配置与字体修复 (复刻本地成功逻辑)
 # ==========================================
 st.set_page_config(
     page_title="肺动脉高压风险预测系统",
@@ -26,7 +26,7 @@ def configure_font_environment():
     """
     font_filename = "SimHei.ttf"
     # 使用极其稳定的 jsDelivr CDN 加速下载
-    font_url = "https://cdn.jsdelivr.net/gh/StellarCN/scp_zh@master/fonts/SimHei.ttf"
+    font_url = "[https://cdn.jsdelivr.net/gh/StellarCN/scp_zh@master/fonts/SimHei.ttf](https://cdn.jsdelivr.net/gh/StellarCN/scp_zh@master/fonts/SimHei.ttf)"
 
     # 1. 下载字体文件 (如果本地没有)
     if not os.path.exists(font_filename):
@@ -286,14 +286,3 @@ if st.sidebar.button("🔍 开始预测风险"):
         st.error("系统错误：模型未加载。")
 else:
     st.info("👈 请在左侧侧边栏输入患者的临床参数，然后点击“开始预测风险”按钮。")
-```
-
-### 核心改动说明（请看第 56 行）：
-
-```python
-# 1. 强制 SimHei 为第一优先级 (解决中文方框)
-plt.rcParams['font.sans-serif'] = ['SimHei']
-
-# 2. 强制关闭 Unicode 减号 (解决负号方框)
-# 这一行完全复刻了你本地代码的效果！
-plt.rcParams['axes.unicode_minus'] = False
