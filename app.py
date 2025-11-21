@@ -11,7 +11,7 @@ import requests
 from sklearn.base import BaseEstimator, TransformerMixin
 
 # ==========================================
-# 1. 核心配置与字体修复 (复刻本地成功逻辑)
+# 1. 核心配置与“全能”字体修复
 # ==========================================
 st.set_page_config(
     page_title="肺动脉高压风险预测系统",
@@ -19,44 +19,43 @@ st.set_page_config(
     layout="wide"
 )
 
-def configure_font_environment():
+def configure_font_noto():
     """
-    下载 SimHei 字体并强制 Matplotlib 使用它。
-    关键策略：SimHei (主字体) + unicode_minus=False (解决负号)。
+    下载并配置 Noto Sans SC (思源黑体)。
+    这是一个全能字体，同时完美支持中文汉字和数学负号，无需任何 Hack。
     """
-    font_filename = "SimHei.ttf"
-    # 使用极其稳定的 jsDelivr CDN 加速下载
-    font_url = "[https://cdn.jsdelivr.net/gh/StellarCN/scp_zh@master/fonts/SimHei.ttf](https://cdn.jsdelivr.net/gh/StellarCN/scp_zh@master/fonts/SimHei.ttf)"
+    # 字体文件名
+    font_filename = "NotoSansSC-Regular.ttf"
+    # 稳定下载源 (GitHub Raw)
+    font_url = "https://github.com/google/fonts/raw/main/ofl/notosanssc/NotoSansSC-Regular.ttf"
 
-    # 1. 下载字体文件 (如果本地没有)
+    # 1. 下载字体
     if not os.path.exists(font_filename):
-        with st.spinner("正在初始化中文字体环境 (SimHei)..."):
+        with st.spinner("正在初始化最佳字体环境 (Noto Sans SC)..."):
             try:
-                response = requests.get(font_url, timeout=10)
+                response = requests.get(font_url, timeout=30)
                 if response.status_code == 200:
                     with open(font_filename, "wb") as f:
                         f.write(response.content)
                 else:
-                    st.warning(f"字体下载失败 (Code {response.status_code})，将尝试使用系统默认字体。")
+                    st.warning(f"字体下载失败 (Code {response.status_code})")
             except Exception as e:
                 st.warning(f"网络异常，字体下载失败: {e}")
 
-    # 2. 强制向 Matplotlib 注册该字体文件
+    # 2. 注册并强制使用
     if os.path.exists(font_filename):
         try:
-            # 清除旧缓存 (关键！)
+            # 添加字体到管理器
             fm.fontManager.addfont(font_filename)
             
-            # 3. 全局样式设置
-            # 强制 SimHei 为第一优先级，解决中文乱码
-            plt.rcParams['font.sans-serif'] = ['SimHei'] 
+            # 获取注册后的准确字体名
+            prop = fm.FontProperties(fname=font_filename)
+            custom_font_name = prop.get_name() # 应该是 'Noto Sans SC'
             
-            # 【关键代码】复刻你本地代码的逻辑！
-            # SimHei 不支持数学减号(U+2212)，必须设为 False 用键盘短横线(ASCII)代替
-            plt.rcParams['axes.unicode_minus'] = False 
-            
-            # 双重保险：确保 SHAP 内部绘图引擎也收到这个指令
-            matplotlib.rc('axes', unicode_minus=False)
+            # 全局设置
+            plt.rcParams['font.family'] = 'sans-serif'
+            plt.rcParams['font.sans-serif'] = [custom_font_name] # 只用这一个字体，它啥都有
+            plt.rcParams['axes.unicode_minus'] = False #以此为双重保险
             
             return True
         except Exception as e:
@@ -64,8 +63,8 @@ def configure_font_environment():
             return False
     return False
 
-# 执行字体配置
-is_font_ready = configure_font_environment()
+# 执行配置
+is_font_ready = configure_font_noto()
 
 # --- 自定义 CSS ---
 st.markdown("""
@@ -86,7 +85,7 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. 定义必要的类 (防止模型加载报错)
+# 2. 定义必要的类
 # ==========================================
 class DataFrameConverter(BaseEstimator, TransformerMixin):
     def __init__(self):
@@ -142,9 +141,9 @@ if model and feature_names:
     
     st.sidebar.markdown("---")
     if is_font_ready:
-        st.sidebar.caption("✅ 字体状态：SimHei (已加载)")
+        st.sidebar.caption("✅ 字体环境：Noto Sans SC (全能字体)")
     else:
-        st.sidebar.caption("⚠️ 字体状态：系统默认 (可能乱码)")
+        st.sidebar.caption("⚠️ 字体下载失败，可能乱码")
 
 # ==========================================
 # 5. 主界面：预测与解释逻辑
@@ -167,7 +166,7 @@ if st.sidebar.button("🔍 开始预测风险"):
             # B. 计算 SHAP
             final_explanation = None
             try:
-                # 1. 准备模型输入
+                # 1. 准备数据
                 if hasattr(model, 'steps') or hasattr(model, 'named_steps'):
                     final_estimator = model._final_estimator
                     preprocessor = model[:-1]
@@ -179,7 +178,7 @@ if st.sidebar.button("🔍 开始预测风险"):
                     final_estimator = model
                     processed_data_df = input_df
 
-                # 2. 计算 SHAP 值
+                # 2. 计算 SHAP (使用统一变量名，修复报错)
                 shap_values_obj = None 
                 try:
                     explainer = shap.TreeExplainer(final_estimator)
@@ -188,8 +187,9 @@ if st.sidebar.button("🔍 开始预测风险"):
                     explainer = shap.TreeExplainer(final_estimator, data=processed_data_df, model_output="probability")
                     shap_values_obj = explainer(processed_data_df)
 
-                # 3. 提取数据
+                # 3. 构建解释对象
                 if shap_values_obj is not None:
+                    # 提取数值
                     if len(shap_values_obj.values.shape) == 3:
                         shap_contribution = shap_values_obj.values[0, :, 1]
                         base_val = shap_values_obj.base_values[0, 1]
@@ -197,9 +197,10 @@ if st.sidebar.button("🔍 开始预测风险"):
                         shap_contribution = shap_values_obj.values[0]
                         base_val = shap_values_obj.base_values[0]
 
+                    # 提取原始输入
                     original_input_values = input_df.iloc[0].values
 
-                    # 4. 构建解释对象
+                    # 组装
                     final_explanation = shap.Explanation(
                         values=shap_contribution,
                         base_values=base_val,
@@ -207,7 +208,7 @@ if st.sidebar.button("🔍 开始预测风险"):
                         feature_names=feature_names
                     )
                 else:
-                    st.error("SHAP 计算未返回有效结果")
+                    st.error("SHAP 计算失败")
 
             except Exception as e:
                 st.error(f"SHAP 计算模块出错: {str(e)}")
@@ -267,8 +268,10 @@ if st.sidebar.button("🔍 开始预测风险"):
                         # 绘制瀑布图
                         fig, ax = plt.subplots(figsize=(10, 6))
                         
-                        # 【最终确认】绘图前再次强制应用本地代码成功的逻辑
-                        plt.rcParams['font.sans-serif'] = ['SimHei']
+                        # 最终确认：强制使用 Noto Sans SC
+                        # 这个字体啥都有，无需 hack
+                        prop = fm.FontProperties(fname="NotoSansSC-Regular.ttf")
+                        plt.rcParams['font.family'] = prop.get_name()
                         plt.rcParams['axes.unicode_minus'] = False
                         
                         shap.plots.waterfall(final_explanation, show=False, max_display=14)
