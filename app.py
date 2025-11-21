@@ -4,10 +4,18 @@ import numpy as np
 import joblib
 import shap
 import matplotlib.pyplot as plt
+from sklearn.base import BaseEstimator, TransformerMixin
+
+class DataFrameConverter(TransformerMixin, BaseEstimator):
+    def __init__(self, feature_names): self.feature_names = feature_names
+
+    def fit(self, X, y=None): return self
+
+    def transform(self, X): return pd.DataFrame(X, columns=self.feature_names)
+    pass
 
 # ==========================================
-# 1. 页面配置 (Nature 风格布局)
-# ==========================================
+
 st.set_page_config(
     page_title="ML Risk Calculator",
     page_icon="⚕️",
@@ -191,4 +199,5 @@ if st.sidebar.button("Calculate Prediction"):
     else:
         st.error("Model not loaded properly.")
 else:
+
     st.info("👈 Please input clinical parameters in the sidebar and click 'Calculate'.")
