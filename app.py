@@ -6,13 +6,12 @@ import shap
 import matplotlib.pyplot as plt
 import matplotlib
 import matplotlib.font_manager as fm
-import matplotlib.ticker as ticker  # 引入 ticker 用于强制格式化
 import os
 import requests
 from sklearn.base import BaseEstimator, TransformerMixin
 
 # ==========================================
-# 1. 核心配置与字体准备
+# 1. 核心配置与字体修复
 # ==========================================
 st.set_page_config(
     page_title="肺动脉高压风险预测系统",
@@ -22,29 +21,78 @@ st.set_page_config(
 
 def configure_font_environment():
     """
-    下载 SimHei 字体文件备用。
-    注意：我们不再全局设置 font.sans-serif = SimHei，
-    而是只在绘图时，针对中文字段手动应用字体。
-    这样可以防止 SimHei 污染数字显示的负号。
+    下载 SimHei 字体并强制 Matplotlib 使用它。
+    目标：同时正确显示中文和负号。
     """
     font_filename = "SimHei.ttf"
+    # 纯 URL 字符串，避免 Markdown 格式导致下载失败
     font_url = "https://cdn.jsdelivr.net/gh/StellarCN/scp_zh@master/fonts/SimHei.ttf"
 
+    # 如果本地没有字体，尝试下载
     if not os.path.exists(font_filename):
-        with st.spinner("正在初始化中文字体环境..."):
+        with st.spinner("正在初始化中文字体环境 (SimHei)..."):
             try:
                 response = requests.get(font_url, timeout=10)
                 if response.status_code == 200:
                     with open(font_filename, "wb") as f:
                         f.write(response.content)
+                else:
+                    st.warning(f"字体下载失败 (Code {response.status_code})，将尝试使用系统默认字体。")
             except Exception as e:
-                st.warning(f"字体下载异常: {e}")
+                st.warning(f"网络异常，字体下载失败: {e}")
 
-    return os.path.exists(font_filename)
+    # 注册字体并配置 Matplotlib
+    if os.path.exists(font_filename):
+        try:
+            fm.fontManager.addfont(font_filename)
 
+            # 全局字体设置：优先使用 SimHei
+            plt.rcParams["font.family"] = "sans-serif"
+            plt.rcParams["font.sans-serif"] = ["SimHei"]
+
+            # 禁用 Unicode minus，让坐标轴等地方使用普通 '-'
+            plt.rcParams["axes.unicode_minus"] = False
+            matplotlib.rc("axes", unicode_minus=False)
+
+            # 备用设置，确保后续新建图也继承
+            matplotlib.rc("font", family="sans-serif", sans_serif=["SimHei"])
+
+            return True
+        except Exception as e:
+            st.error(f"字体配置出错: {e}")
+            return False
+
+    return False
+
+def fix_shap_minus_signs(ax=None):
+    """
+    将图中所有文本里的 Unicode 减号 U+2212 替换为普通 ASCII '-'，
+    解决部分中文字体（如 SimHei）不包含 U+2212 导致负号显示为方框的问题。
+    """
+    if ax is None:
+        ax = plt.gca()
+
+    def _replace_minus(text: str) -> str:
+        return text.replace("\u2212", "-") if text else text
+
+    # 坐标轴刻度标签
+    for label in list(ax.get_xticklabels()) + list(ax.get_yticklabels()):
+        s = label.get_text()
+        new_s = _replace_minus(s)
+        if new_s != s:
+            label.set_text(new_s)
+
+    # 图中的所有文本对象（包括 SHAP 的数值标签）
+    for text_obj in ax.texts:
+        s = text_obj.get_text()
+        new_s = _replace_minus(s)
+        if new_s != s:
+            text_obj.set_text(new_s)
+
+# 执行字体配置
 is_font_ready = configure_font_environment()
 
-# --- 自定义 CSS (保持原样) ---
+# --- 自定义 CSS ---
 st.markdown("""
     <style>
     .main { background-color: #f9f9f9; }
@@ -63,13 +111,19 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. 类定义与加载
+# 2. 定义必要的类 (防止模型加载报错)
 # ==========================================
 class DataFrameConverter(BaseEstimator, TransformerMixin):
-    def __init__(self): pass
-    def fit(self, X, y=None): return self
-    def transform(self, X): return pd.DataFrame(X)
+    def __init__(self):
+        pass
+    def fit(self, X, y=None):
+        return self
+    def transform(self, X):
+        return pd.DataFrame(X)
 
+# ==========================================
+# 3. 加载模型与特征
+# ==========================================
 @st.cache_resource
 def load_model_and_features():
     try:
@@ -81,7 +135,10 @@ def load_model_and_features():
     try:
         with open('selected_features_1SE_建模数据.txt', 'r', encoding='utf-8') as f:
             content = f.read().strip()
-            features = [x.strip() for x in (content.split(',') if ',' in content else content.split('\n'))]
+            if ',' in content:
+                features = [x.strip() for x in content.split(',')]
+            else:
+                features = [x.strip() for x in content.split('\n')]
     except FileNotFoundError:
         st.error("❌ 错误：未找到特征文件 'selected_features_1SE_建模数据.txt'。")
         return None, None
@@ -91,13 +148,14 @@ def load_model_and_features():
 model, feature_names = load_model_and_features()
 
 # ==========================================
-# 3. 侧边栏
+# 4. 侧边栏：输入界面
 # ==========================================
-if model and feature_names:
+if model is not None and feature_names is not None:
     st.sidebar.header("📋 患者参数录入")
     st.sidebar.markdown("请在下方输入临床特征值：")
     
     input_data = {}
+    
     for feature in feature_names:
         feature_lower = feature.lower()
         if 'sex' in feature_lower or 'gender' in feature_lower or 'code' in feature_lower:
@@ -110,28 +168,31 @@ if model and feature_names:
     st.sidebar.markdown("---")
     if is_font_ready:
         st.sidebar.caption("✅ 字体状态：SimHei (已加载)")
+    else:
+        st.sidebar.caption("⚠️ 字体状态：系统默认 (可能乱码)")
 
 # ==========================================
-# 4. 主逻辑
+# 5. 主界面：预测与解释逻辑
 # ==========================================
 st.title("🏥 基于心磁成像装置的肺动脉高压检测计算器")
 st.markdown("基于机器学习随机森林算法构建 | 仅供科研参考")
 st.markdown("---")
 
 if st.sidebar.button("🔍 开始预测风险"):
-    if model and feature_names:
-        with st.spinner('正在计算...'):
+    if model is not None and feature_names is not None:
+        with st.spinner('正在计算模型预测概率与 SHAP 解释值，请稍候...'):
             
-            # A. 概率计算
+            # A. 计算概率
             try:
                 probability = model.predict_proba(input_df)[0, 1]
-            except:
+            except Exception:
                 prediction = model.predict(input_df)[0]
                 probability = 1.0 if prediction == 1 else 0.0
 
-            # B. SHAP 计算
+            # B. 计算 SHAP
             final_explanation = None
             try:
+                # 1. 准备模型输入
                 if hasattr(model, 'steps') or hasattr(model, 'named_steps'):
                     final_estimator = model._final_estimator
                     preprocessor = model[:-1]
@@ -143,13 +204,20 @@ if st.sidebar.button("🔍 开始预测风险"):
                     final_estimator = model
                     processed_data_df = input_df
 
+                # 2. 计算 SHAP 值
+                shap_values_obj = None 
                 try:
                     explainer = shap.TreeExplainer(final_estimator)
                     shap_values_obj = explainer(processed_data_df)
-                except:
-                    explainer = shap.TreeExplainer(final_estimator, data=processed_data_df, model_output="probability")
+                except Exception:
+                    explainer = shap.TreeExplainer(
+                        final_estimator, 
+                        data=processed_data_df, 
+                        model_output="probability"
+                    )
                     shap_values_obj = explainer(processed_data_df)
 
+                # 3. 提取数据
                 if shap_values_obj is not None:
                     if len(shap_values_obj.values.shape) == 3:
                         shap_contribution = shap_values_obj.values[0, :, 1]
@@ -158,16 +226,23 @@ if st.sidebar.button("🔍 开始预测风险"):
                         shap_contribution = shap_values_obj.values[0]
                         base_val = shap_values_obj.base_values[0]
 
+                    original_input_values = input_df.iloc[0].values
+
+                    # 4. 构建解释对象
                     final_explanation = shap.Explanation(
                         values=shap_contribution,
                         base_values=base_val,
-                        data=input_df.iloc[0].values,
+                        data=original_input_values,
                         feature_names=feature_names
                     )
-            except Exception as e:
-                st.error(f"SHAP 计算出错: {str(e)}")
+                else:
+                    st.error("SHAP 计算未返回有效结果")
 
-            # C. 结果展示 (恢复原始代码)
+            except Exception as e:
+                st.error(f"SHAP 计算模块出错: {str(e)}")
+                final_explanation = None
+
+            # C. 结果展示
             col1, col2 = st.columns([1, 2])
 
             with col1:
@@ -182,13 +257,19 @@ if st.sidebar.button("🔍 开始预测风险"):
                     risk_label = "高风险 (High Risk)"
                     icon = "⚠️"
                     advice_box = "warning"
-                    advice_text = f"模型预测概率 ({risk_percent:.1f}%) 已超过最佳截断值 ({optimal_threshold:.1f}%)。\n\n**建议：** 考虑进行超声心动图或右心导管检查以进一步确诊。"
+                    advice_text = (
+                        f"模型预测概率 ({risk_percent:.1f}%) 已超过最佳截断值 ({optimal_threshold:.1f}%)。\n\n"
+                        "**建议：** 考虑进行超声心动图或右心导管检查以进一步确诊。"
+                    )
                 else:
                     color = "#28a745"
                     risk_label = "低风险 (Low Risk)"
                     icon = "✅"
                     advice_box = "success"
-                    advice_text = f"模型预测概率 ({risk_percent:.1f}%) 低于最佳截断值 ({optimal_threshold:.1f}%)。\n\n**建议：** 目前风险较低，建议按常规流程进行随访。"
+                    advice_text = (
+                        f"模型预测概率 ({risk_percent:.1f}%) 低于最佳截断值 ({optimal_threshold:.1f}%)。\n\n"
+                        "**建议：** 目前风险较低，建议按常规流程进行随访。"
+                    )
                 
                 st.markdown(
                     f"""
@@ -218,68 +299,31 @@ if st.sidebar.button("🔍 开始预测风险"):
                 
                 if final_explanation is not None:
                     try:
-                        # =================================================
-                        # 🚀 100% 解决负号问题的重构方案
-                        # =================================================
-                        
-                        # 1. 强制重置样式，清除任何全局字体设置，回归默认英文环境
-                        plt.clf()
-                        plt.style.use('default')
-                        plt.rcParams['axes.unicode_minus'] = False # 全局关闭 Unicode 减号，使用 ASCII 连字符
-
-                        # 2. 创建画布
                         fig, ax = plt.subplots(figsize=(10, 6))
-                        
-                        # 3. 绘制瀑布图
+
+                        # 再次确认当前绘图环境的字体配置
+                        plt.rcParams["font.family"] = "sans-serif"
+                        plt.rcParams["font.sans-serif"] = ["SimHei"]
+                        plt.rcParams["axes.unicode_minus"] = False
+
+                        # 绘制 SHAP 瀑布图（不 show，让我们有机会修改文本）
                         shap.plots.waterfall(final_explanation, show=False, max_display=14)
-                        
-                        # 4. 获取当前轴
-                        ax = plt.gca()
-                        
-                        # 5. 准备字体 (精确控制)
-                        # SimHei 用于中文 (Y轴)
-                        zh_font = fm.FontProperties(fname="SimHei.ttf", size=12) if os.path.exists("SimHei.ttf") else fm.FontProperties(family='sans-serif', size=12)
-                        # Arial/DejaVu 用于数字 (X轴和Bar上的文字) -> 确保负号显示
-                        en_font = fm.FontProperties(family=['Arial', 'DejaVu Sans', 'sans-serif'], size=12)
-                        
-                        # --- 关键修复 A: X 轴刻度 ---
-                        # 强制使用 FuncFormatter 重新格式化数字，确保输出的是普通 ASCII 字符串
-                        def ascii_format(x, pos):
-                            return '{:.1f}'.format(x) # Python 默认格式化就是用短横线，不是 Unicode 减号
-                        
-                        ax.xaxis.set_major_formatter(ticker.FuncFormatter(ascii_format))
-                        
-                        for label in ax.get_xticklabels():
-                            label.set_fontproperties(en_font)
 
-                        # --- 关键修复 B: 图内文字 (柱子旁的数值) ---
-                        for txt in ax.texts:
-                            txt.set_fontproperties(en_font)
-                            # 双重保险：手动替换文本中的减号
-                            original = txt.get_text()
-                            # 替换 \u2212 (Unicode减号) 为 - (ASCII连字符)
-                            fixed = original.replace('−', '-').replace('\u2212', '-')
-                            txt.set_text(fixed)
-
-                        # --- 关键修复 C: Y 轴特征名 (仅此处使用中文) ---
-                        # 只有这里我们需要 SimHei
-                        ax.set_yticklabels(ax.get_yticklabels(), fontproperties=zh_font)
-                        
-                        # --- 关键修复 D: X 轴标签 ---
-                        ax.set_xlabel(ax.get_xlabel(), fontproperties=en_font)
+                        # 关键一步：把 SHAP 文本中的 Unicode 减号替换成普通 '-'
+                        fix_shap_minus_signs(ax)
 
                         plt.tight_layout()
                         st.pyplot(fig)
-                        
                     except Exception as plot_err:
-                         st.error(f"绘图失败: {plot_err}")
-                         import traceback
-                         st.text(traceback.format_exc())
+                        st.error(f"绘图失败。调试信息: {plot_err}")
                 else:
                     st.warning("无法生成 SHAP 图，请检查输入数据或模型结构。")
             
             st.markdown("---")
-            st.caption(f"**说明：** 本工具采用约登指数 (Youden Index = {youden_index}) 确定的最佳截断值 {optimal_threshold/100:.5f} 进行风险分层。结果仅供科研参考。")
+            st.caption(
+                f"**说明：** 本工具采用约登指数 (Youden Index = {youden_index}) "
+                f"确定的最佳截断值 {optimal_threshold/100:.5f} 进行风险分层。结果仅供科研参考。"
+            )
     else:
         st.error("系统错误：模型未加载。")
 else:
