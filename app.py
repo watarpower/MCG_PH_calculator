@@ -11,7 +11,7 @@ import requests
 from sklearn.base import BaseEstimator, TransformerMixin
 
 # ==========================================
-# 1. 核心配置与字体修复 (稳定下载源版)
+# 1. 核心配置与字体智能修复 (中西合璧版)
 # ==========================================
 st.set_page_config(
     page_title="肺动脉高压风险预测系统",
@@ -20,44 +20,61 @@ st.set_page_config(
 )
 
 # --- 字体下载与配置逻辑 ---
-def fix_font_stable():
+def fix_font_hybrid():
     """
-    下载 SimHei 字体 (使用更稳定的源)，并配置 Matplotlib。
+    下载 SimHei 字体，并配置混合字体策略：
+    1. 优先使用 'DejaVu Sans' 显示数字和符号 (解决负号乱码)。
+    2. 回退使用 'SimHei' 显示中文汉字 (解决中文方框)。
     """
     font_file = "SimHei.ttf"
-    # 使用更稳定的下载源 (GitHub Raw)
-    font_url = "https://raw.githubusercontent.com/StellarCN/scp_zh/master/fonts/SimHei.ttf"
+    # 两个下载源，防止挂掉
+    font_urls = [
+        "https://github.com/StellarCN/scp_zh/raw/master/fonts/SimHei.ttf",
+        "https://fastly.jsdelivr.net/gh/StellarCN/scp_zh@master/fonts/SimHei.ttf"
+    ]
 
     # 1. 下载字体 (如果不存在)
     if not os.path.exists(font_file):
-        with st.spinner("正在配置中文字体 (SimHei)..."):
-            try:
-                response = requests.get(font_url, timeout=30)
-                if response.status_code == 200:
-                    with open(font_file, "wb") as f:
-                        f.write(response.content)
-                else:
-                    st.warning(f"字体下载响应错误: {response.status_code}，将使用系统默认字体")
-            except Exception as e:
-                st.warning(f"字体下载网络超时，将使用系统默认字体。错误: {e}")
+        with st.spinner("正在初始化字体环境..."):
+            for url in font_urls:
+                try:
+                    response = requests.get(url, timeout=10)
+                    if response.status_code == 200:
+                        with open(font_file, "wb") as f:
+                            f.write(response.content)
+                        break # 下载成功，跳出循环
+                except:
+                    continue
 
-    # 2. 注册并使用
+    # 2. 注册并配置
     if os.path.exists(font_file):
         try:
+            # 把 SimHei 加入 Matplotlib 的字体库，但不设为全局唯一
             fm.fontManager.addfont(font_file)
             
-            # 设置全局参数
-            plt.rcParams['font.sans-serif'] = ['SimHei'] 
-            plt.rcParams['axes.unicode_minus'] = False # 解决负号显示为方框
+            # 【关键配置】
+            # 列表第一位：DejaVu Sans (Linux系统自带，完美支持负号和数字)
+            # 列表第二位：SimHei (下载的，用于显示中文)
+            plt.rcParams['font.family'] = ['sans-serif']
+            plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'SimHei']
+            
+            # 强制关闭 Unicode 负号，使用 ASCII 短横线
+            # 这对 DejaVu Sans 来说是双重保险
+            plt.rcParams['axes.unicode_minus'] = False
             
             return True
         except Exception as e:
             st.warning(f"字体配置警告: {e}")
             return False
-    return False
+    else:
+        # 如果下载失败，至少保证负号能显示
+        plt.rcParams['font.sans-serif'] = ['DejaVu Sans']
+        plt.rcParams['axes.unicode_minus'] = False
+        st.error("字体下载失败，中文可能无法显示，但预测功能正常。")
+        return False
 
 # 执行修复
-is_font_loaded = fix_font_stable()
+is_font_loaded = fix_font_hybrid()
 
 # --- 自定义 CSS ---
 st.markdown("""
@@ -134,9 +151,9 @@ if model and feature_names:
     
     st.sidebar.markdown("---")
     if is_font_loaded:
-        st.sidebar.caption("✅ 字体环境：SimHei 已加载")
+        st.sidebar.caption("✅ 字体环境：混合模式 (中文+负号)")
     else:
-        st.sidebar.caption("⚠️ 字体下载失败，将使用系统默认")
+        st.sidebar.caption("⚠️ 字体加载异常")
 
 # ==========================================
 # 5. 主界面：预测与解释逻辑
@@ -156,10 +173,9 @@ if st.sidebar.button("🔍 开始预测风险"):
                 prediction = model.predict(input_df)[0]
                 probability = 1.0 if prediction == 1 else 0.0
 
-            # B. 计算 SHAP (修复变量名问题)
+            # B. 计算 SHAP
             final_explanation = None
             try:
-                # 1. 准备数据
                 if hasattr(model, 'steps') or hasattr(model, 'named_steps'):
                     final_estimator = model._final_estimator
                     preprocessor = model[:-1]
@@ -171,21 +187,17 @@ if st.sidebar.button("🔍 开始预测风险"):
                     final_estimator = model
                     processed_data_df = input_df
 
-                # 2. 计算 SHAP 值 (统一变量名为 shap_values_obj)
-                # 先初始化，防止 try 内部报错导致变量未定义
-                shap_values_obj = None 
+                # 变量初始化，防止报错
+                shap_values_obj = None
                 
                 try:
                     explainer = shap.TreeExplainer(final_estimator)
                     shap_values_obj = explainer(processed_data_df)
                 except Exception:
-                    # 备用方案
                     explainer = shap.TreeExplainer(final_estimator, data=processed_data_df, model_output="probability")
                     shap_values_obj = explainer(processed_data_df)
 
-                # 3. 提取数据构建解释对象
                 if shap_values_obj is not None:
-                    # 提取贡献值
                     if len(shap_values_obj.values.shape) == 3:
                         shap_contribution = shap_values_obj.values[0, :, 1]
                         base_val = shap_values_obj.base_values[0, 1]
@@ -193,10 +205,8 @@ if st.sidebar.button("🔍 开始预测风险"):
                         shap_contribution = shap_values_obj.values[0]
                         base_val = shap_values_obj.base_values[0]
 
-                    # 提取原始输入
                     original_input_values = input_df.iloc[0].values
 
-                    # 手动组装 Explanation 对象
                     final_explanation = shap.Explanation(
                         values=shap_contribution,
                         base_values=base_val,
@@ -204,7 +214,7 @@ if st.sidebar.button("🔍 开始预测风险"):
                         feature_names=feature_names
                     )
                 else:
-                    st.error("SHAP 计算未能生成有效结果")
+                    st.error("SHAP计算未能返回结果")
 
             except Exception as e:
                 st.error(f"SHAP 计算模块出错: {str(e)}")
@@ -264,7 +274,9 @@ if st.sidebar.button("🔍 开始预测风险"):
                         # 绘制瀑布图
                         fig, ax = plt.subplots(figsize=(10, 6))
                         
-                        # 再次确保设置
+                        # --- 绘图前再次强制应用字体设置 ---
+                        # 这步非常关键：确保 Matplotlib 知道要用两个字体
+                        plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'SimHei']
                         plt.rcParams['axes.unicode_minus'] = False
                         
                         shap.plots.waterfall(final_explanation, show=False, max_display=14)
