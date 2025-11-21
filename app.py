@@ -11,17 +11,24 @@ import requests
 from sklearn.base import BaseEstimator, TransformerMixin
 
 # ==========================================
-# 1. 核心配置与字体修复 (优化版)
+# 1. 核心配置与字体修复 (修复版)
 # ==========================================
+st.set_page_config(
+    page_title="肺动脉高压风险预测系统",
+    page_icon="🏥",
+    layout="wide"
+)
+
 def configure_font_environment():
     """
     下载 SimHei 字体并强制 Matplotlib 使用它。
     解决中文乱码和负号显示问题的终极方案。
     """
     font_filename = "SimHei.ttf"
+    # 使用极其稳定的 jsDelivr CDN 加速下载
     font_url = "https://cdn.jsdelivr.net/gh/StellarCN/scp_zh@master/fonts/SimHei.ttf"
 
-    # 1. 下载字体
+    # 1. 下载字体文件 (如果本地没有)
     if not os.path.exists(font_filename):
         with st.spinner("正在初始化中文字体环境 (SimHei)..."):
             try:
@@ -30,37 +37,31 @@ def configure_font_environment():
                     with open(font_filename, "wb") as f:
                         f.write(response.content)
                 else:
-                    st.warning("字体下载失败，将使用默认字体。")
+                    st.warning(f"字体下载失败 (Code {response.status_code})，将尝试使用系统默认字体。")
             except Exception as e:
-                st.warning(f"字体下载异常: {e}")
+                st.warning(f"网络异常，字体下载失败: {e}")
 
-    # 2. 注册字体并设置全局参数
+    # 2. 强制向 Matplotlib 注册该字体文件
     if os.path.exists(font_filename):
         try:
             # 添加字体文件到管理器
             fm.fontManager.addfont(font_filename)
             
-            # 设置 Matplotlib 全局参数
+            # 3. 全局样式设置
+            # 强制 SimHei 为第一优先级，解决中文乱码
             plt.rcParams['font.family'] = ['sans-serif']
-            plt.rcParams['font.sans-serif'] = ['SimHei'] # 指定 SimHei
-            plt.rcParams['axes.unicode_minus'] = False   # 关键：使用 ASCII 连字符解决负号问题
+            plt.rcParams['font.sans-serif'] = ['SimHei'] 
             
-            # 额外保险：解决部分环境下的缓存问题
-            import shutil
-            try:
-                cache_dir = matplotlib.get_cachedir()
-                # 只有在第一次运行时清理缓存可能有点危险，这里选择不强行删除，
-                # 而是依靠 addfont 的动态加载功能
-            except:
-                pass
-                
+            # 【关键】SimHei 不支持数学减号(U+2212)，必须设为 False 用键盘短横线(ASCII)代替
+            plt.rcParams['axes.unicode_minus'] = False 
+            
             return True
         except Exception as e:
             st.error(f"字体配置出错: {e}")
             return False
     return False
 
-# 执行配置
+# 执行字体配置
 is_font_ready = configure_font_environment()
 
 # --- 自定义 CSS ---
@@ -100,7 +101,7 @@ def load_model_and_features():
     try:
         model = joblib.load('final_model_RF.pkl')
     except FileNotFoundError:
-        st.error("❌ 错误：未找到模型文件 'final_model_RF.pkl'。")
+        st.error("❌ 错误：未找到模型文件 'final_model_RF.pkl'。请确保文件已上传到 GitHub 仓库根目录。")
         return None, None
 
     try:
@@ -140,7 +141,7 @@ if model and feature_names:
     if is_font_ready:
         st.sidebar.caption("✅ 字体状态：SimHei (已加载)")
     else:
-        st.sidebar.caption("⚠️ 字体状态：未加载 (可能乱码)")
+        st.sidebar.caption("⚠️ 字体状态：系统默认 (可能乱码)")
 
 # ==========================================
 # 5. 主界面：预测与解释逻辑
@@ -157,8 +158,12 @@ if st.sidebar.button("🔍 开始预测风险"):
             try:
                 probability = model.predict_proba(input_df)[0, 1]
             except:
-                prediction = model.predict(input_df)[0]
-                probability = 1.0 if prediction == 1 else 0.0
+                try:
+                    prediction = model.predict(input_df)[0]
+                    probability = 1.0 if prediction == 1 else 0.0
+                except Exception as e:
+                    st.error(f"预测失败: {e}")
+                    probability = 0.0
 
             # B. 计算 SHAP
             final_explanation = None
@@ -186,6 +191,7 @@ if st.sidebar.button("🔍 开始预测风险"):
 
                 # 3. 提取数据
                 if shap_values_obj is not None:
+                    # 处理不同版本的 SHAP 返回形状
                     if len(shap_values_obj.values.shape) == 3:
                         shap_contribution = shap_values_obj.values[0, :, 1]
                         base_val = shap_values_obj.base_values[0, 1]
@@ -195,7 +201,7 @@ if st.sidebar.button("🔍 开始预测风险"):
 
                     original_input_values = input_df.iloc[0].values
 
-                    # 4. 构建解释对象 (移花接木：数学用归一化值，显示用原始值)
+                    # 4. 构建解释对象
                     final_explanation = shap.Explanation(
                         values=shap_contribution,
                         base_values=base_val,
@@ -254,7 +260,7 @@ if st.sidebar.button("🔍 开始预测风险"):
                 else:
                     st.success(advice_text)
 
-           with col2:
+            with col2:
                 st.markdown("### 🔍 SHAP 可解释性分析 (瀑布图)")
                 st.markdown("下图展示了各特征对预测结果的贡献：**红色**条表示增加风险，**蓝色**条表示降低风险。")
                 
@@ -263,31 +269,28 @@ if st.sidebar.button("🔍 开始预测风险"):
                         # 创建画布
                         fig, ax = plt.subplots(figsize=(10, 6))
                         
-                        # 【核心修复】在绘图的瞬间，强制锁定字体和负号设置
-                        # 这样可以覆盖 SHAP 可能带来的样式重置
+                        # 【核心修复逻辑】
+                        # 使用 context manager 强制在绘图期间应用字体设置
+                        # 这可以覆盖 SHAP 内部可能的样式重置，并解决负号显示问题
                         rc_params = {
                             'font.sans-serif': ['SimHei'],
                             'axes.unicode_minus': False,
-                            'font.size': 12  # 适当调整字号
+                            'font.size': 12
                         }
                         
-                        # 使用 context manager 确保设置仅对当前图生效且具备最高优先级
                         with plt.rc_context(rc_params):
+                            # 绘制瀑布图
                             shap.plots.waterfall(final_explanation, show=False, max_display=14)
                         
-                        # 再次确保坐标轴使用的是正确的设置（双重保险）
+                        # 再次确保坐标轴字体正确 (双重保险)
                         ax = plt.gca()
                         for label in ax.get_xticklabels() + ax.get_yticklabels():
                             label.set_fontname('SimHei')
-                        
+                            
                         plt.tight_layout()
                         st.pyplot(fig)
-                        
                     except Exception as plot_err:
                          st.error(f"绘图失败。调试信息: {plot_err}")
-                         # 打印详细堆栈以便调试
-                         import traceback
-                         st.text(traceback.format_exc())
                 else:
                     st.warning("无法生成 SHAP 图，请检查输入数据或模型结构。")
             
@@ -297,4 +300,3 @@ if st.sidebar.button("🔍 开始预测风险"):
         st.error("系统错误：模型未加载。")
 else:
     st.info("👈 请在左侧侧边栏输入患者的临床参数，然后点击“开始预测风险”按钮。")
-
