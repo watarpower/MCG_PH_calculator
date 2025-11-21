@@ -11,7 +11,7 @@ import requests
 from sklearn.base import BaseEstimator, TransformerMixin
 
 # ==========================================
-# 1. 核心配置
+# 1. 核心配置与字体加载
 # ==========================================
 st.set_page_config(
     page_title="肺动脉高压风险预测系统",
@@ -19,13 +19,14 @@ st.set_page_config(
     layout="wide"
 )
 
-def prepare_font_resource():
+def configure_font():
     """
-    仅下载 SimHei 字体文件备用，绝不进行全局注册。
+    下载并注册 SimHei 字体，确保全局可以使用中文。
     """
     font_filename = "SimHei.ttf"
     font_url = "https://cdn.jsdelivr.net/gh/StellarCN/scp_zh@master/fonts/SimHei.ttf"
 
+    # 1. 下载字体
     if not os.path.exists(font_filename):
         with st.spinner("正在初始化中文字体资源 (SimHei)..."):
             try:
@@ -37,9 +38,19 @@ def prepare_font_resource():
                     st.warning(f"字体下载失败 (Code {response.status_code})")
             except Exception as e:
                 st.warning(f"网络异常，字体下载失败: {e}")
-    return os.path.exists(font_filename)
 
-is_font_ready = prepare_font_resource()
+    # 2. 注册字体 (关键步骤)
+    if os.path.exists(font_filename):
+        try:
+            # 这一步让 Matplotlib 知道 SimHei 的存在
+            fm.fontManager.addfont(font_filename)
+            return True
+        except Exception as e:
+            st.error(f"字体注册失败: {e}")
+            return False
+    return False
+
+is_font_ready = configure_font()
 
 # --- 自定义 CSS ---
 st.markdown("""
@@ -60,7 +71,7 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. 定义类与加载模型
+# 2. 类与模型加载
 # ==========================================
 class DataFrameConverter(BaseEstimator, TransformerMixin):
     def __init__(self):
@@ -110,10 +121,10 @@ if model and feature_names:
     input_df = pd.DataFrame([input_data], columns=feature_names)
     st.sidebar.markdown("---")
     if is_font_ready:
-        st.sidebar.caption("✅ 字体资源：SimHei (准备就绪)")
+        st.sidebar.caption("✅ 字体状态：SimHei (已加载)")
 
 # ==========================================
-# 4. 主逻辑：预测与 SHAP
+# 4. 核心逻辑：预测与 SHAP
 # ==========================================
 st.title("🏥 基于心磁成像装置的肺动脉高压检测计算器")
 st.markdown("基于机器学习随机森林算法构建 | 仅供科研参考")
@@ -121,16 +132,15 @@ st.markdown("---")
 
 if st.sidebar.button("🔍 开始预测风险"):
     if model and feature_names:
-        with st.spinner('正在计算模型预测概率与 SHAP 解释值...'):
-            
-            # A. 概率计算
+        with st.spinner('正在计算...'):
+            # A. 概率
             try:
                 probability = model.predict_proba(input_df)[0, 1]
             except:
                 prediction = model.predict(input_df)[0]
                 probability = 1.0 if prediction == 1 else 0.0
 
-            # B. SHAP 值计算
+            # B. SHAP
             final_explanation = None
             try:
                 if hasattr(model, 'steps') or hasattr(model, 'named_steps'):
@@ -168,7 +178,7 @@ if st.sidebar.button("🔍 开始预测风险"):
             except Exception as e:
                 st.error(f"SHAP 计算出错: {e}")
 
-            # C. 结果显示
+            # C. 显示
             col1, col2 = st.columns([1, 2])
 
             with col1:
@@ -178,10 +188,10 @@ if st.sidebar.button("🔍 开始预测风险"):
                 
                 if risk_percent > optimal_threshold:
                     color, risk_label, icon = "#dc3545", "高风险 (High Risk)", "⚠️"
-                    advice = f"风险值 ({risk_percent:.1f}%) > 阈值 ({optimal_threshold:.1f}%)。建议进一步检查。"
+                    advice = f"风险值 ({risk_percent:.1f}%) > 阈值 ({optimal_threshold:.1f}%)。"
                 else:
                     color, risk_label, icon = "#28a745", "低风险 (Low Risk)", "✅"
-                    advice = f"风险值 ({risk_percent:.1f}%) < 阈值 ({optimal_threshold:.1f}%)。建议常规随访。"
+                    advice = f"风险值 ({risk_percent:.1f}%) < 阈值 ({optimal_threshold:.1f}%)。"
                 
                 st.markdown(f"""
                     <div class="report-box" style="text-align: center; border-left: 5px solid {color};">
@@ -190,7 +200,6 @@ if st.sidebar.button("🔍 开始预测风险"):
                         <hr>
                         <h3 style="color: {color};">{icon} {risk_label}</h3>
                     </div>""", unsafe_allow_html=True)
-                
                 if risk_percent > optimal_threshold: st.warning(advice)
                 else: st.success(advice)
 
@@ -200,52 +209,53 @@ if st.sidebar.button("🔍 开始预测风险"):
                 
                 if final_explanation is not None:
                     try:
-                        # =====================================================
-                        # 🔴 终极修复方案：逆向策略 🔴
-                        # 1. 先重置所有 Matplotlib 设置为默认（英文环境）
-                        #    这样保证了负号、数字绝对正常。
-                        # =====================================================
-                        plt.clf()
-                        plt.rcParams.update(plt.rcParamsDefault)
+                        # ==================================================
+                        # 🔴 修正方案：全局中文 + 局部强制英文数字 🔴
+                        # ==================================================
                         
-                        # 2. 强制把减号设为 ASCII 连字符 (双重保险)
-                        plt.rcParams['axes.unicode_minus'] = False
+                        # 1. 设置全局字体为 SimHei (解决中文不显示问题)
+                        plt.rcParams['font.sans-serif'] = ['SimHei'] 
+                        plt.rcParams['axes.unicode_minus'] = False # 尝试软性修复负号
                         
-                        # 3. 创建画布并绘图
+                        # 2. 创建画布
                         fig, ax = plt.subplots(figsize=(10, 6))
+                        
+                        # 3. 绘图
                         shap.plots.waterfall(final_explanation, show=False, max_display=14)
                         
-                        # =====================================================
-                        # 4. 后处理：只对“中文特征名”进行字体修补
-                        #    此时图上的负号已经是完美的了。
-                        # =====================================================
+                        # 4. 【核心后处理】
+                        # 获取当前坐标轴
                         ax = plt.gca()
                         
-                        # 准备中文字体对象
-                        if os.path.exists("SimHei.ttf"):
-                            chinese_font = fm.FontProperties(fname="SimHei.ttf")
-                            chinese_font.set_size(12)
-                            
-                            # 遍历 Y 轴标签（特征名），手动赋予中文字体
-                            for label in ax.get_yticklabels():
-                                label.set_fontproperties(chinese_font)
-                        else:
-                            st.warning("SimHei 字体未加载，中文可能显示为方框。")
-
-                        # 5. 再次暴力检查所有的文本对象
-                        #    如果有漏网之鱼使用了 Unicode 减号，强制替换为连字符
-                        for txt in ax.texts + ax.get_xticklabels():
-                            original = txt.get_text()
-                            if '−' in original: # 这里的 '−' 是 Unicode 减号
-                                txt.set_text(original.replace('−', '-'))
+                        # 定义一个绝对安全的英文字体 (用于替换数字)
+                        english_font = fm.FontProperties(family='DejaVu Sans')
+                        
+                        # A. 强制 X 轴刻度 (数字) 使用英文字体
+                        for label in ax.get_xticklabels():
+                            label.set_fontproperties(english_font)
+                            # 双重保险：手动替换减号
+                            text = label.get_text()
+                            if '−' in text: 
+                                label.set_text(text.replace('−', '-'))
+                                
+                        # B. 强制图内数字 (柱子旁边的标注) 使用英文字体
+                        for txt in ax.texts:
+                            txt.set_fontproperties(english_font)
+                            text = txt.get_text()
+                            if '−' in text:
+                                txt.set_text(text.replace('−', '-'))
+                                
+                        # 注意：Y 轴标签 (ax.get_yticklabels) 我们不动它
+                        # 因为全局已经设为 SimHei，所以中文特征名会自动正确显示
                         
                         plt.tight_layout()
                         st.pyplot(fig)
                         
                     except Exception as e:
                         st.error(f"绘图错误: {e}")
+                        import traceback
+                        st.text(traceback.format_exc())
                 else:
                     st.warning("无 SHAP 数据。")
-
 else:
     st.info("👈 请输入参数并点击开始预测。")
