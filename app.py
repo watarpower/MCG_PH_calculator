@@ -11,7 +11,7 @@ import requests
 from sklearn.base import BaseEstimator, TransformerMixin
 
 # ==========================================
-# 1. 核心配置与字体修复 (中文+负号完美版)
+# 1. 核心配置与 Noto Sans 字体 (完美修复版)
 # ==========================================
 st.set_page_config(
     page_title="肺动脉高压风险预测系统",
@@ -19,20 +19,21 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- 字体修复逻辑 ---
-def fix_font_final():
+# --- 字体下载与配置逻辑 ---
+def fix_font_noto():
     """
-    方案：只用 SimHei (黑体)，但强制关闭 unicode_minus。
-    结果：中文正常显示，负号使用 ASCII 短横线也能正常显示。
+    下载并使用 Google Noto Sans SC (思源黑体)。
+    该字体同时完美支持中文汉字和数学符号(-号)，无需 hack。
     """
-    font_file = "SimHei.ttf"
-    font_url = "https://github.com/StellarCN/scp_zh/raw/master/fonts/SimHei.ttf"
+    font_file = "NotoSansSC-Regular.ttf"
+    # Google Fonts 官方直链
+    font_url = "https://github.com/google/fonts/raw/main/ofl/notosanssc/NotoSansSC-Regular.ttf"
 
     # 1. 下载字体
     if not os.path.exists(font_file):
-        with st.spinner("正在配置字体环境 (SimHei)..."):
+        with st.spinner("正在配置最佳字体环境 (Noto Sans SC)..."):
             try:
-                response = requests.get(font_url, timeout=15)
+                response = requests.get(font_url, timeout=20)
                 if response.status_code == 200:
                     with open(font_file, "wb") as f:
                         f.write(response.content)
@@ -41,20 +42,27 @@ def fix_font_final():
             except Exception as e:
                 st.error(f"网络异常: {e}")
 
-    # 2. 注册并配置
+    # 2. 注册并使用
     if os.path.exists(font_file):
         try:
+            # 注册字体
             fm.fontManager.addfont(font_file)
+            prop = fm.FontProperties(fname=font_file)
+            custom_font_name = prop.get_name() # 通常是 'Noto Sans SC'
             
-            # 关键设置！！！
-            # 1. 强制首选字体为 SimHei
-            plt.rcParams['font.sans-serif'] = ['SimHei'] 
-            # 2. 【核心修复】解决负号显示为方框的问题
-            # 告诉 Matplotlib 不要用数学减号(U+2212)，而是用 ASCII 连字符(U+002D)
+            # 重置一下样式，防止旧设置干扰
+            plt.style.use('default')
+            
+            # 设置全局参数
+            plt.rcParams['font.family'] = 'sans-serif'
+            plt.rcParams['font.sans-serif'] = [custom_font_name] # 只用这一个字体，它啥都有
+            
+            # Noto Sans 完美支持 Unicode 减号，所以这里不需要设为 False
+            # 但为了双重保险，防止环境差异，我们还是设为 False 用短横线
             plt.rcParams['axes.unicode_minus'] = False
             
-            # 确保 SHAP 也应用此设置
-            matplotlib.rc('axes', unicode_minus=False)
+            # 强制 SHAP
+            matplotlib.rc('font', family=custom_font_name)
             
             return True
         except Exception as e:
@@ -63,7 +71,7 @@ def fix_font_final():
     return False
 
 # 执行修复
-is_font_loaded = fix_font_final()
+is_font_loaded = fix_font_noto()
 
 # --- 自定义 CSS ---
 st.markdown("""
@@ -140,9 +148,9 @@ if model and feature_names:
     
     st.sidebar.markdown("---")
     if is_font_loaded:
-        st.sidebar.caption("✅ 字体环境：SimHei (ASCII模式)")
+        st.sidebar.caption("✅ 字体环境：Noto Sans SC (思源黑体)")
     else:
-        st.sidebar.caption("⚠️ 字体加载异常")
+        st.sidebar.caption("⚠️ 字体下载失败，可能显示乱码")
 
 # ==========================================
 # 5. 主界面：预测与解释逻辑
@@ -183,7 +191,7 @@ if st.sidebar.button("🔍 开始预测风险"):
                     explainer = shap.TreeExplainer(final_estimator, data=processed_data_df, model_output="probability")
                     shap_values_obj = explainer(processed_data_df)
 
-                if len(shap_values_obj.values.shape) == 3:
+                if len(shap_values.values.shape) == 3:
                     shap_contribution = shap_values_obj.values[0, :, 1]
                     base_val = shap_values_obj.base_values[0, 1]
                 else:
@@ -257,11 +265,9 @@ if st.sidebar.button("🔍 开始预测风险"):
                         # 绘制瀑布图
                         fig, ax = plt.subplots(figsize=(10, 6))
                         
-                        # --- 绘图前再次确保负号配置 ---
-                        plt.rcParams['font.sans-serif'] = ['SimHei']
+                        # 绘图前再确认一次参数
                         plt.rcParams['axes.unicode_minus'] = False
-                        # ----------------------------
-
+                        
                         shap.plots.waterfall(final_explanation, show=False, max_display=14)
                         plt.tight_layout()
                         st.pyplot(fig)
