@@ -11,7 +11,7 @@ import requests
 from sklearn.base import BaseEstimator, TransformerMixin
 
 # ==========================================
-# 1. 核心配置与字体修复 (修复版)
+# 1. 核心配置与字体资源准备
 # ==========================================
 st.set_page_config(
     page_title="肺动脉高压风险预测系统",
@@ -19,50 +19,33 @@ st.set_page_config(
     layout="wide"
 )
 
-def configure_font_environment():
+def prepare_font_resource():
     """
-    下载 SimHei 字体并强制 Matplotlib 使用它。
-    解决中文乱码和负号显示问题的终极方案。
+    仅负责下载 SimHei 字体文件到本地，供后续绘图时按需加载。
+    不再进行全局暴力替换，避免影响 SHAP 内部对负号的处理。
     """
     font_filename = "SimHei.ttf"
-    # 使用极其稳定的 jsDelivr CDN 加速下载
     font_url = "https://cdn.jsdelivr.net/gh/StellarCN/scp_zh@master/fonts/SimHei.ttf"
 
-    # 1. 下载字体文件 (如果本地没有)
+    # 如果本地没有字体文件，则下载
     if not os.path.exists(font_filename):
-        with st.spinner("正在初始化中文字体环境 (SimHei)..."):
+        with st.spinner("正在初始化中文字体资源 (SimHei)..."):
             try:
                 response = requests.get(font_url, timeout=10)
                 if response.status_code == 200:
                     with open(font_filename, "wb") as f:
                         f.write(response.content)
+                    return True
                 else:
-                    st.warning(f"字体下载失败 (Code {response.status_code})，将尝试使用系统默认字体。")
+                    st.warning(f"字体下载失败 (Code {response.status_code})")
+                    return False
             except Exception as e:
                 st.warning(f"网络异常，字体下载失败: {e}")
+                return False
+    return True
 
-    # 2. 强制向 Matplotlib 注册该字体文件
-    if os.path.exists(font_filename):
-        try:
-            # 添加字体文件到管理器
-            fm.fontManager.addfont(font_filename)
-            
-            # 3. 全局样式设置
-            # 强制 SimHei 为第一优先级，解决中文乱码
-            plt.rcParams['font.family'] = ['sans-serif']
-            plt.rcParams['font.sans-serif'] = ['SimHei'] 
-            
-            # 【关键】SimHei 不支持数学减号(U+2212)，必须设为 False 用键盘短横线(ASCII)代替
-            plt.rcParams['axes.unicode_minus'] = False 
-            
-            return True
-        except Exception as e:
-            st.error(f"字体配置出错: {e}")
-            return False
-    return False
-
-# 执行字体配置
-is_font_ready = configure_font_environment()
+# 确保字体文件存在
+is_font_ready = prepare_font_resource()
 
 # --- 自定义 CSS ---
 st.markdown("""
@@ -101,7 +84,7 @@ def load_model_and_features():
     try:
         model = joblib.load('final_model_RF.pkl')
     except FileNotFoundError:
-        st.error("❌ 错误：未找到模型文件 'final_model_RF.pkl'。请确保文件已上传到 GitHub 仓库根目录。")
+        st.error("❌ 错误：未找到模型文件 'final_model_RF.pkl'。")
         return None, None
 
     try:
@@ -139,9 +122,9 @@ if model and feature_names:
     
     st.sidebar.markdown("---")
     if is_font_ready:
-        st.sidebar.caption("✅ 字体状态：SimHei (已加载)")
+        st.sidebar.caption("✅ 字体资源：SimHei (已就绪)")
     else:
-        st.sidebar.caption("⚠️ 字体状态：系统默认 (可能乱码)")
+        st.sidebar.caption("⚠️ 字体资源：未找到 (可能影响中文显示)")
 
 # ==========================================
 # 5. 主界面：预测与解释逻辑
@@ -191,7 +174,6 @@ if st.sidebar.button("🔍 开始预测风险"):
 
                 # 3. 提取数据
                 if shap_values_obj is not None:
-                    # 处理不同版本的 SHAP 返回形状
                     if len(shap_values_obj.values.shape) == 3:
                         shap_contribution = shap_values_obj.values[0, :, 1]
                         base_val = shap_values_obj.base_values[0, 1]
@@ -201,7 +183,6 @@ if st.sidebar.button("🔍 开始预测风险"):
 
                     original_input_values = input_df.iloc[0].values
 
-                    # 4. 构建解释对象
                     final_explanation = shap.Explanation(
                         values=shap_contribution,
                         base_values=base_val,
@@ -260,62 +241,68 @@ if st.sidebar.button("🔍 开始预测风险"):
                 else:
                     st.success(advice_text)
 
-with col2:
+            with col2:
                 st.markdown("### 🔍 SHAP 可解释性分析 (瀑布图)")
                 st.markdown("下图展示了各特征对预测结果的贡献：**红色**条表示增加风险，**蓝色**条表示降低风险。")
                 
                 if final_explanation is not None:
                     try:
-                        # 1. 创建画布
+                        # -------------------------------------------------------
+                        # 【终极修复】混合字体策略 + 暴力替换
+                        # -------------------------------------------------------
+                        
+                        # 1. 确保绘图时使用默认的 unicode_minus=False，
+                        #    但这往往不够，所以我们在后面会进行后处理。
+                        plt.rcParams['axes.unicode_minus'] = False
+                        
+                        # 2. 创建画布
                         fig, ax = plt.subplots(figsize=(10, 6))
                         
-                        # 2. 基础绘图 (此时先不纠结乱码，先把图画出来)
-                        # 我们先暂时设为 False，尽量让 SHAP 使用连字符
-                        plt.rcParams['axes.unicode_minus'] = False
+                        # 3. 绘制瀑布图 (此时不用管乱码问题，先画出来)
                         shap.plots.waterfall(final_explanation, show=False, max_display=14)
                         
-                        # =================================================
-                        # 3. 【核心修复】后处理：分区域强制指定字体
-                        # =================================================
-                        
-                        # 获取当前坐标轴
+                        # 4. 获取当前轴对象
                         ax = plt.gca()
                         
-                        # 准备两种字体
-                        # A. 中文字体 (用于 Y 轴特征名)
-                        chinese_font = fm.FontProperties(fname="SimHei.ttf") 
-                        # B. 英文字体 (用于 X 轴数值和图中数字，确保负号显示)
-                        english_font = fm.FontProperties(family='DejaVu Sans') 
-
-                        # --- 修复 A: Y 轴标签 (特征名 - 需要中文) ---
-                        # 遍历每一个 Y 轴标签，强制设为 SimHei
+                        # 5. 定义两种字体
+                        # 中文字体：用于 Y 轴特征名
+                        # 注意：这里直接指向文件路径，确保有效
+                        if os.path.exists("SimHei.ttf"):
+                            chinese_font = fm.FontProperties(fname="SimHei.ttf")
+                        else:
+                            # 备用方案：如果没有 SimHei，尝试系统自带的黑体
+                            chinese_font = fm.FontProperties(family='sans-serif')
+                        
+                        # 英文字体：用于数字和 X 轴，确保负号显示
+                        # 使用 Matplotlib 内置的 DejaVu Sans，它对数学符号支持最好
+                        english_font = fm.FontProperties(family='DejaVu Sans')
+                        
+                        # --- 步骤 A: 修复 Y 轴 (特征名) 为中文 ---
                         for label in ax.get_yticklabels():
                             label.set_fontproperties(chinese_font)
-                            label.set_fontsize(12) # 保持字号适中
-
-                        # --- 修复 B: X 轴标签 (数值 - 需要负号) ---
-                        # 遍历每一个 X 轴标签，强制设为英文字体
+                            label.set_fontsize(12) # 调整字号
+                        
+                        # --- 步骤 B: 修复 X 轴 (刻度值) 为英文 + 替换符号 ---
                         for label in ax.get_xticklabels():
                             label.set_fontproperties(english_font)
-                            # 同时把可能的特殊减号替换为普通连字符
+                            # 暴力替换：如果检测到 Unicode 减号，替换为 ASCII 连字符
                             text = label.get_text()
-                            if '−' in text:  # 检测 Unicode 减号
+                            if '−' in text: 
                                 label.set_text(text.replace('−', '-'))
-
-                        # --- 修复 C: 图内部的数字标注 (需要负号) ---
-                        # SHAP 会在柱子上标数字，这些是 ax.texts
+                        
+                        # --- 步骤 C: 修复图内数值 (柱子上的数字) ---
+                        # SHAP 的数值是作为 text 对象添加到图中的
                         for txt in ax.texts:
                             txt.set_fontproperties(english_font)
-                            # 暴力替换文本内容中的减号
                             original_text = txt.get_text()
+                            # 同样进行暴力替换
                             if '−' in original_text:
                                 txt.set_text(original_text.replace('−', '-'))
 
-                        # --- 修复 D: X 轴标题 ---
-                        ax.set_xlabel(ax.get_xlabel(), fontproperties=chinese_font)
+                        # --- 步骤 D: 修复 X 轴标题 (E[f(x)] = ...) ---
+                        # 这里的标题通常包含数学符号，用英文字体比较安全
+                        ax.set_xlabel(ax.get_xlabel(), fontproperties=english_font)
 
-                        # =================================================
-                        
                         plt.tight_layout()
                         st.pyplot(fig)
                         
@@ -332,4 +319,3 @@ with col2:
         st.error("系统错误：模型未加载。")
 else:
     st.info("👈 请在左侧侧边栏输入患者的临床参数，然后点击“开始预测风险”按钮。")
-
