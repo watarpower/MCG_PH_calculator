@@ -48,18 +48,22 @@ def configure_font_environment():
 
             # 全局字体设置：优先使用 SimHei
             plt.rcParams["font.family"] = "sans-serif"
-            plt.rcParams["font.sans-serif"] = ["SimHei"]
+            plt.rcParams["font.sans-serif"] = ["SimHei", "DejaVu Sans"]
 
             # 禁用 Unicode minus，让坐标轴等地方使用普通 '-'
             plt.rcParams["axes.unicode_minus"] = False
-            matplotlib.rc("axes", unicode_minus=False)
 
-            # 备用设置，确保后续新建图也继承
-            matplotlib.rc("font", family="sans-serif", sans_serif=["SimHei"])
+            # 再同步一份到 matplotlib.rcParams，避免个别库内部单独读取
+            matplotlib.rcParams.update({
+                "font.family": "sans-serif",
+                "font.sans-serif": ["SimHei", "DejaVu Sans"],
+                "axes.unicode_minus": False,
+            })
 
             return True
         except Exception as e:
-            st.error(f"字体配置出错: {e}")
+            # 这里用 warning 而不是 error，避免出现红色大错误提示
+            st.warning(f"字体配置出错，已退回系统默认字体: {e}")
             return False
 
     return False
@@ -180,9 +184,9 @@ st.markdown("---")
 
 if st.sidebar.button("🔍 开始预测风险"):
     if model is not None and feature_names is not None:
-        with st.spinner('正在计算模型预测概率与 SHAP 解释值，请稍候...'):
+        with st.spinner('正在计算模型预测风险与 SHAP 解释值，请稍候...'):
             
-            # A. 计算概率
+            # A. 计算概率（只用于内部风险判断，不展示给用户）
             try:
                 probability = model.predict_proba(input_df)[0, 1]
             except Exception:
@@ -246,10 +250,10 @@ if st.sidebar.button("🔍 开始预测风险"):
             col1, col2 = st.columns([1, 2])
 
             with col1:
-                st.markdown("### 📊 预测风险评分")
+                st.markdown("### 📊 风险分层结果")
+
                 risk_percent = probability * 100
-                
-                optimal_threshold = 35.703 
+                optimal_threshold = 35.703   # 仍用于内部划分，不展示数值
                 youden_index = 0.771
 
                 if risk_percent > optimal_threshold:
@@ -258,8 +262,9 @@ if st.sidebar.button("🔍 开始预测风险"):
                     icon = "⚠️"
                     advice_box = "warning"
                     advice_text = (
-                        f"模型预测概率 ({risk_percent:.1f}%) 已超过最佳截断值 ({optimal_threshold:.1f}%)。\n\n"
-                        "**建议：** 考虑进行超声心动图或右心导管检查以进一步确诊。"
+                        "模型评估结果为 **高风险**，提示患者当前患肺动脉高压的可能性较高。\n\n"
+                        "**建议：** 考虑尽快完善进一步检查（如超声心动图或右心导管检查），"
+                        "并结合临床情况进行综合评估。"
                     )
                 else:
                     color = "#28a745"
@@ -267,21 +272,18 @@ if st.sidebar.button("🔍 开始预测风险"):
                     icon = "✅"
                     advice_box = "success"
                     advice_text = (
-                        f"模型预测概率 ({risk_percent:.1f}%) 低于最佳截断值 ({optimal_threshold:.1f}%)。\n\n"
-                        "**建议：** 目前风险较低，建议按常规流程进行随访。"
+                        "模型评估结果为 **低风险**，提示患者当前患肺动脉高压的可能性较低。\n\n"
+                        "**建议：** 可按常规流程进行随访，根据临床症状和体征决定是否进一步检查。"
                     )
                 
+                # 卡片中只展示“高/低风险”，不展示具体概率
                 st.markdown(
                     f"""
                     <div class="report-box" style="text-align: center; border-left: 5px solid {color};">
-                        <h2 style="color: {color}; font-size: 50px; margin: 0;">{risk_percent:.1f}%</h2>
-                        <p style="color: gray; font-size: 14px; margin-bottom: 5px;">患病概率 (Probability)</p>
-                        <div class="threshold-info">
-                            Optimal Cut-off: {optimal_threshold:.3f}%<br>
-                            (Youden Index: {youden_index})
-                        </div>
-                        <hr style="margin: 15px 0;">
-                        <h3 style="color: {color}; margin: 0;">{icon} {risk_label}</h3>
+                        <h2 style="color: {color}; font-size: 40px; margin: 0;">{icon} {risk_label}</h2>
+                        <p style="color: gray; font-size: 14px; margin-top: 10px;">
+                            本结果基于机器学习模型的综合评估，仅供科研与辅助决策参考。
+                        </p>
                     </div>
                     """, 
                     unsafe_allow_html=True
@@ -303,13 +305,13 @@ if st.sidebar.button("🔍 开始预测风险"):
 
                         # 再次确认当前绘图环境的字体配置
                         plt.rcParams["font.family"] = "sans-serif"
-                        plt.rcParams["font.sans-serif"] = ["SimHei"]
+                        plt.rcParams["font.sans-serif"] = ["SimHei", "DejaVu Sans"]
                         plt.rcParams["axes.unicode_minus"] = False
 
                         # 绘制 SHAP 瀑布图（不 show，让我们有机会修改文本）
                         shap.plots.waterfall(final_explanation, show=False, max_display=14)
 
-                        # 关键一步：把 SHAP 文本中的 Unicode 减号替换成普通 '-'
+                        # 把 SHAP 文本中的 Unicode 减号替换成普通 '-'
                         fix_shap_minus_signs(ax)
 
                         plt.tight_layout()
@@ -320,9 +322,10 @@ if st.sidebar.button("🔍 开始预测风险"):
                     st.warning("无法生成 SHAP 图，请检查输入数据或模型结构。")
             
             st.markdown("---")
+            # 这里保留方法学说明，可以视需要保留或删除
             st.caption(
                 f"**说明：** 本工具采用约登指数 (Youden Index = {youden_index}) "
-                f"确定的最佳截断值 {optimal_threshold/100:.5f} 进行风险分层。结果仅供科研参考。"
+                f"确定的最佳截断值进行风险分层，结果仅供科研参考。"
             )
     else:
         st.error("系统错误：模型未加载。")
