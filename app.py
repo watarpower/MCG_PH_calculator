@@ -11,7 +11,7 @@ import requests
 from sklearn.base import BaseEstimator, TransformerMixin
 
 # ==========================================
-# 1. 核心配置与“核弹级”字体修复
+# 1. 核心配置与“双字体”智能修复
 # ==========================================
 st.set_page_config(
     page_title="肺动脉高压风险预测系统",
@@ -19,54 +19,55 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- 终极字体修复逻辑 ---
-def fix_chinese_font():
+# --- 终极字体修复逻辑 (中西合璧版) ---
+def fix_fonts_mixed():
     """
-    在云端环境中强制下载并加载 SimHei 字体，彻底解决乱码。
+    下载 SimHei，并配置 Matplotlib 使用混合字体：
+    英文/数字/符号 -> 优先使用系统默认 (DejaVu Sans)，保证负号正常显示。
+    中文 -> 回退使用 SimHei，保证汉字正常显示。
     """
     font_file = "SimHei.ttf"
-    # 备用下载地址 (GitHub Raw 加速)
+    # 备用下载地址
     font_url = "https://github.com/StellarCN/scp_zh/raw/master/fonts/SimHei.ttf"
 
-    # 1. 如果当前目录下没有这个字体文件，就下载它
+    # 1. 确保 SimHei 字体存在
     if not os.path.exists(font_file):
-        with st.spinner("正在初始化中文字体环境 (SimHei)，请稍候..."):
+        with st.spinner("正在配置字体环境 (SimHei)，请稍候..."):
             try:
                 response = requests.get(font_url, timeout=10)
                 if response.status_code == 200:
                     with open(font_file, "wb") as f:
                         f.write(response.content)
                 else:
-                    st.error(f"字体下载网络错误: {response.status_code}")
+                    st.error(f"字体下载失败: {response.status_code}")
             except Exception as e:
-                st.error(f"无法下载字体，请检查网络连接: {e}")
+                st.error(f"网络异常: {e}")
 
-    # 2. 强制 Matplotlib 注册并使用这个字体
+    # 2. 注册 SimHei 并设置优先顺序
     if os.path.exists(font_file):
         try:
-            # 添加字体文件到管理器
+            # 把 SimHei 加入 Matplotlib 的字体库
             fm.fontManager.addfont(font_file)
             
-            # 强制设置 Matplotlib 全局参数
+            # 【关键修改】设置字体列表
+            # 优先用 'DejaVu Sans' (处理负号、数字、英文)
+            # 其次用 'SimHei' (处理中文)
             plt.rcParams['font.family'] = ['sans-serif']
-            plt.rcParams['font.sans-serif'] = ['SimHei'] # 强制只用 SimHei，防止回退
-            plt.rcParams['axes.unicode_minus'] = False   # 解决负号显示为方块的问题
+            plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'SimHei'] 
             
-            # 强制 SHAP 内部也使用这个字体
-            matplotlib.rc('font', family='SimHei')
+            # 再次强制关闭 Unicode 负号 (使用 ASCII 短横线)
+            plt.rcParams['axes.unicode_minus'] = False
             
             return True
         except Exception as e:
-            st.warning(f"字体加载报错: {e}")
+            st.warning(f"字体配置警告: {e}")
             return False
-    else:
-        # 如果下载失败，回退到系统字体尝试
-        return False
+    return False
 
 # 执行字体修复
-is_font_loaded = fix_chinese_font()
+is_font_loaded = fix_fonts_mixed()
 
-# --- 自定义 CSS 样式 ---
+# --- 自定义 CSS ---
 st.markdown("""
     <style>
     .main { background-color: #f9f9f9; }
@@ -85,7 +86,7 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. 定义必要的类 (防止模型加载 AttributeError)
+# 2. 定义必要的类 (防止模型加载报错)
 # ==========================================
 class DataFrameConverter(BaseEstimator, TransformerMixin):
     def __init__(self):
@@ -141,12 +142,11 @@ if model and feature_names:
 
     input_df = pd.DataFrame([input_data], columns=feature_names)
     
-    # 调试信息：在侧边栏底部显示字体状态
     st.sidebar.markdown("---")
     if is_font_loaded:
-        st.sidebar.success("✅ 中文字体 SimHei 已加载")
+        st.sidebar.caption("✅ 字体环境：混合模式 (DejaVu + SimHei)")
     else:
-        st.sidebar.warning("⚠️ 中文字体加载失败，可能显示方框")
+        st.sidebar.caption("⚠️ 字体加载异常")
 
 # ==========================================
 # 5. 主界面：预测与解释逻辑
@@ -191,7 +191,6 @@ if st.sidebar.button("🔍 开始预测风险"):
                     explainer = shap.TreeExplainer(final_estimator, data=processed_data_df, model_output="probability")
                     shap_values_obj = explainer(processed_data_df)
 
-                # 提取 SHAP 值
                 if len(shap_values_obj.values.shape) == 3:
                     shap_contribution = shap_values_obj.values[0, :, 1]
                     base_val = shap_values_obj.base_values[0, 1]
@@ -199,7 +198,6 @@ if st.sidebar.button("🔍 开始预测风险"):
                     shap_contribution = shap_values_obj.values[0]
                     base_val = shap_values_obj.base_values[0]
 
-                # 提取原始输入
                 original_input_values = input_df.iloc[0].values
 
                 # 手动组装 Explanation 对象
@@ -227,13 +225,13 @@ if st.sidebar.button("🔍 开始预测风险"):
                 youden_index = 0.771
 
                 if risk_percent > optimal_threshold:
-                    color = "#dc3545" # 红色
+                    color = "#dc3545"
                     risk_label = "高风险 (High Risk)"
                     icon = "⚠️"
                     advice_box = "warning"
                     advice_text = f"模型预测概率 ({risk_percent:.1f}%) 已超过最佳截断值 ({optimal_threshold:.1f}%)。\n\n**建议：** 考虑进行超声心动图或右心导管检查以进一步确诊。"
                 else:
-                    color = "#28a745" # 绿色
+                    color = "#28a745"
                     risk_label = "低风险 (Low Risk)"
                     icon = "✅"
                     advice_box = "success"
@@ -269,6 +267,10 @@ if st.sidebar.button("🔍 开始预测风险"):
                     try:
                         # 绘制瀑布图
                         fig, ax = plt.subplots(figsize=(10, 6))
+                        
+                        # 再次显式关闭 Unicode 负号，确保万无一失
+                        plt.rcParams['axes.unicode_minus'] = False
+                        
                         shap.plots.waterfall(final_explanation, show=False, max_display=14)
                         plt.tight_layout()
                         st.pyplot(fig)
