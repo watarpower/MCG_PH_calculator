@@ -6,10 +6,12 @@ import shap
 import matplotlib.pyplot as plt
 import matplotlib
 import matplotlib.font_manager as fm
+import os
+import requests
 from sklearn.base import BaseEstimator, TransformerMixin
 
 # ==========================================
-# 1. 核心配置与中文字体设置 (智能适配版)
+# 1. 核心配置与“核弹级”字体修复
 # ==========================================
 st.set_page_config(
     page_title="肺动脉高压风险预测系统",
@@ -17,40 +19,52 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- 字体自动检测与设置逻辑 ---
-# 目的：同时兼容 Windows (本地开发) 和 Linux (Streamlit Cloud 服务器)
-# 优先寻找列表中的字体，一旦找到即设为默认
-font_candidates = [
-    'WenQuanYi Micro Hei', # Streamlit Cloud (Linux) 常用中文字体
-    'SimHei',              # Windows 黑体
-    'Microsoft YaHei',     # Windows 微软雅黑
-    'Noto Sans CJK SC',    # Linux 通用
-    'DejaVu Sans'          # 英文保底
-]
+# --- 终极字体修复逻辑 ---
+def fix_chinese_font():
+    """
+    在云端环境中强制下载并加载 SimHei 字体，彻底解决乱码。
+    """
+    font_file = "SimHei.ttf"
+    # 备用下载地址 (GitHub Raw 加速)
+    font_url = "https://github.com/StellarCN/scp_zh/raw/master/fonts/SimHei.ttf"
 
-system_fonts = set(f.name for f in fm.fontManager.ttflist)
-found_font = 'DejaVu Sans' # 默认保底
+    # 1. 如果当前目录下没有这个字体文件，就下载它
+    if not os.path.exists(font_file):
+        with st.spinner("正在初始化中文字体环境 (SimHei)，请稍候..."):
+            try:
+                response = requests.get(font_url, timeout=10)
+                if response.status_code == 200:
+                    with open(font_file, "wb") as f:
+                        f.write(response.content)
+                else:
+                    st.error(f"字体下载网络错误: {response.status_code}")
+            except Exception as e:
+                st.error(f"无法下载字体，请检查网络连接: {e}")
 
-for font in font_candidates:
-    if font in system_fonts:
-        found_font = font
-        break
+    # 2. 强制 Matplotlib 注册并使用这个字体
+    if os.path.exists(font_file):
+        try:
+            # 添加字体文件到管理器
+            fm.fontManager.addfont(font_file)
+            
+            # 强制设置 Matplotlib 全局参数
+            plt.rcParams['font.family'] = ['sans-serif']
+            plt.rcParams['font.sans-serif'] = ['SimHei'] # 强制只用 SimHei，防止回退
+            plt.rcParams['axes.unicode_minus'] = False   # 解决负号显示为方块的问题
+            
+            # 强制 SHAP 内部也使用这个字体
+            matplotlib.rc('font', family='SimHei')
+            
+            return True
+        except Exception as e:
+            st.warning(f"字体加载报错: {e}")
+            return False
+    else:
+        # 如果下载失败，回退到系统字体尝试
+        return False
 
-# 如果在 Linux 环境下没检测到，尝试强制指定文泉驿 (依赖 packages.txt 安装)
-if found_font == 'DejaVu Sans':
-    # 检查是否可能在 Streamlit Cloud 环境
-    try:
-        import os
-        if os.path.exists('/usr/share/fonts'):
-             found_font = 'WenQuanYi Micro Hei'
-    except:
-        pass
-
-# 应用字体设置
-plt.rcParams['font.family'] = 'sans-serif'
-plt.rcParams['font.sans-serif'] = [found_font] + font_candidates
-plt.rcParams['axes.unicode_minus'] = False 
-matplotlib.rc('font', family=found_font)
+# 执行字体修复
+is_font_loaded = fix_chinese_font()
 
 # --- 自定义 CSS 样式 ---
 st.markdown("""
@@ -119,7 +133,6 @@ if model and feature_names:
     input_data = {}
     
     for feature in feature_names:
-        # 简单的启发式规则：根据名字判断输入类型
         feature_lower = feature.lower()
         if 'sex' in feature_lower or 'gender' in feature_lower or 'code' in feature_lower:
             input_data[feature] = st.sidebar.selectbox(f"{feature} (分类变量)", options=[0, 1], index=0)
@@ -127,6 +140,13 @@ if model and feature_names:
             input_data[feature] = st.sidebar.number_input(f"{feature} (数值)", value=0.0, format="%.2f")
 
     input_df = pd.DataFrame([input_data], columns=feature_names)
+    
+    # 调试信息：在侧边栏底部显示字体状态
+    st.sidebar.markdown("---")
+    if is_font_loaded:
+        st.sidebar.success("✅ 中文字体 SimHei 已加载")
+    else:
+        st.sidebar.warning("⚠️ 中文字体加载失败，可能显示方框")
 
 # ==========================================
 # 5. 主界面：预测与解释逻辑
@@ -149,58 +169,45 @@ if st.sidebar.button("🔍 开始预测风险"):
                 probability = 1.0 if prediction == 1 else 0.0
 
             # ---------------------------
-            # B. 计算 SHAP 值 (核心修复部分)
+            # B. 计算 SHAP 值
             # ---------------------------
             final_explanation = None
             try:
-                # 1. 拆解 Pipeline，获取预处理后的数学输入
                 if hasattr(model, 'steps') or hasattr(model, 'named_steps'):
                     final_estimator = model._final_estimator
                     preprocessor = model[:-1]
-                    
-                    # 【关键】获取模型真正“看到”的数据（经过归一化/标准化处理的数据）
                     processed_data = preprocessor.transform(input_df)
-                    
-                    # 格式标准化
                     if hasattr(processed_data, "toarray"):
                         processed_data = processed_data.toarray()
                     processed_data_df = pd.DataFrame(processed_data)
-
                 else:
-                    # 如果不是 Pipeline
                     final_estimator = model
                     processed_data_df = input_df
 
-                # 2. 计算数学上的 SHAP 贡献值
                 try:
                     explainer = shap.TreeExplainer(final_estimator)
                     shap_values_obj = explainer(processed_data_df)
                 except Exception:
-                    # 备用方案
                     explainer = shap.TreeExplainer(final_estimator, data=processed_data_df, model_output="probability")
                     shap_values_obj = explainer(processed_data_df)
 
-                # 3. “移花接木”：构建用于展示的 Explanation 对象
-                # 目的：图表显示真实的 SHAP 贡献，但显示的数值是用户输入的原始值（如 0），而非 -0.5
-                
-                # (a) 提取 SHAP 值
+                # 提取 SHAP 值
                 if len(shap_values_obj.values.shape) == 3:
-                    # 二分类模型，取正类 (索引1)
                     shap_contribution = shap_values_obj.values[0, :, 1]
                     base_val = shap_values_obj.base_values[0, 1]
                 else:
                     shap_contribution = shap_values_obj.values[0]
                     base_val = shap_values_obj.base_values[0]
 
-                # (b) 提取用户原始输入 (Display Value)
+                # 提取原始输入
                 original_input_values = input_df.iloc[0].values
 
-                # (c) 手动组装 Explanation 对象
+                # 手动组装 Explanation 对象
                 final_explanation = shap.Explanation(
-                    values=shap_contribution,       # 模型计算出的贡献值 (不变)
-                    base_values=base_val,           # 基准值 (不变)
-                    data=original_input_values,     # 【核心修复】使用原始输入数据，让图表显示 "0" 而非 "-0.5"
-                    feature_names=feature_names     # 【核心修复】使用 txt 中的中文特征名
+                    values=shap_contribution,
+                    base_values=base_val,
+                    data=original_input_values,
+                    feature_names=feature_names
                 )
 
             except Exception as e:
@@ -216,10 +223,8 @@ if st.sidebar.button("🔍 开始预测风险"):
                 st.markdown("### 📊 预测风险评分")
                 risk_percent = probability * 100
                 
-                # === 约登指数阈值设定 ===
                 optimal_threshold = 35.703 
                 youden_index = 0.771
-                # ======================
 
                 if risk_percent > optimal_threshold:
                     color = "#dc3545" # 红色
@@ -262,16 +267,11 @@ if st.sidebar.button("🔍 开始预测风险"):
                 
                 if final_explanation is not None:
                     try:
-                        # 绘制瀑布图 (Waterfall Plot)
-                        # 相比 Force Plot，瀑布图更稳定且适合解释单样本，且完美支持手动 Explanation 对象
+                        # 绘制瀑布图
                         fig, ax = plt.subplots(figsize=(10, 6))
-                        
                         shap.plots.waterfall(final_explanation, show=False, max_display=14)
-                        
-                        # 优化布局，防止文字被截断
                         plt.tight_layout()
                         st.pyplot(fig)
-                        
                     except Exception as plot_err:
                          st.error(f"绘图失败。调试信息: {plot_err}")
                 else:
