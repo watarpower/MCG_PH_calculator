@@ -11,80 +11,57 @@ import requests
 from sklearn.base import BaseEstimator, TransformerMixin
 
 # ==========================================
-# 1. 核心配置与字体终极修复 (容灾版)
+# 1. 核心配置与字体修复 (优化版)
 # ==========================================
-st.set_page_config(
-    page_title="肺动脉高压风险预测系统",
-    page_icon="🏥",
-    layout="wide"
-)
-
-def configure_font_robust():
+def configure_font_environment():
     """
-    多线路下载 SimHei 字体，并强制配置 Matplotlib。
-    解决策略：SimHei (主字体) + unicode_minus=False (解决负号)。
+    下载 SimHei 字体并强制 Matplotlib 使用它。
+    解决中文乱码和负号显示问题的终极方案。
     """
     font_filename = "SimHei.ttf"
-    
-    # 定义多个下载源 (容灾备份)
-    # 1. jsDelivr CDN (高速，推荐)
-    # 2. GitHub Raw (备用)
-    # 3. Google Fonts Noto Sans SC (最后防线，虽不是SimHei但也能用)
-    download_urls = [
-        "https://cdn.jsdelivr.net/gh/StellarCN/scp_zh@master/fonts/SimHei.ttf",
-        "https://raw.githubusercontent.com/StellarCN/scp_zh/master/fonts/SimHei.ttf",
-        "https://github.com/StellarCN/scp_zh/raw/master/fonts/SimHei.ttf"
-    ]
+    font_url = "https://cdn.jsdelivr.net/gh/StellarCN/scp_zh@master/fonts/SimHei.ttf"
 
-    # 1. 下载字体文件 (如果本地没有)
+    # 1. 下载字体
     if not os.path.exists(font_filename):
         with st.spinner("正在初始化中文字体环境 (SimHei)..."):
-            download_success = False
-            for url in download_urls:
-                try:
-                    # 设置较长的超时时间
-                    response = requests.get(url, timeout=15)
-                    if response.status_code == 200:
-                        with open(font_filename, "wb") as f:
-                            f.write(response.content)
-                        download_success = True
-                        break # 下载成功，跳出循环
-                except Exception as e:
-                    continue # 试下一个链接
-            
-            if not download_success:
-                st.error("所有字体下载源均连接失败，中文可能无法正常显示。")
+            try:
+                response = requests.get(font_url, timeout=10)
+                if response.status_code == 200:
+                    with open(font_filename, "wb") as f:
+                        f.write(response.content)
+                else:
+                    st.warning("字体下载失败，将使用默认字体。")
+            except Exception as e:
+                st.warning(f"字体下载异常: {e}")
 
-    # 2. 强制向 Matplotlib 注册该字体文件
+    # 2. 注册字体并设置全局参数
     if os.path.exists(font_filename):
         try:
-            # 清除旧缓存并添加新字体
+            # 添加字体文件到管理器
             fm.fontManager.addfont(font_filename)
             
-            # 获取字体文件的真实名称
-            prop = fm.FontProperties(fname=font_filename)
-            font_name = prop.get_name() # 通常是 'SimHei'
+            # 设置 Matplotlib 全局参数
+            plt.rcParams['font.family'] = ['sans-serif']
+            plt.rcParams['font.sans-serif'] = ['SimHei'] # 指定 SimHei
+            plt.rcParams['axes.unicode_minus'] = False   # 关键：使用 ASCII 连字符解决负号问题
             
-            # 3. 全局样式设置
-            # 强制 SimHei 为第一优先级
-            plt.rcParams['font.family'] = 'sans-serif'
-            plt.rcParams['font.sans-serif'] = [font_name] 
-            
-            # 【关键】SimHei 不支持数学减号，必须设为 False 用短横线代替
-            plt.rcParams['axes.unicode_minus'] = False 
-            
-            # 强制 SHAP 内部也更新
-            matplotlib.rc('font', family=font_name)
-            matplotlib.rc('axes', unicode_minus=False)
-            
+            # 额外保险：解决部分环境下的缓存问题
+            import shutil
+            try:
+                cache_dir = matplotlib.get_cachedir()
+                # 只有在第一次运行时清理缓存可能有点危险，这里选择不强行删除，
+                # 而是依靠 addfont 的动态加载功能
+            except:
+                pass
+                
             return True
         except Exception as e:
             st.error(f"字体配置出错: {e}")
             return False
     return False
 
-# 执行字体配置
-is_font_ready = configure_font_robust()
+# 执行配置
+is_font_ready = configure_font_environment()
 
 # --- 自定义 CSS ---
 st.markdown("""
@@ -277,25 +254,40 @@ if st.sidebar.button("🔍 开始预测风险"):
                 else:
                     st.success(advice_text)
 
-            with col2:
+           with col2:
                 st.markdown("### 🔍 SHAP 可解释性分析 (瀑布图)")
                 st.markdown("下图展示了各特征对预测结果的贡献：**红色**条表示增加风险，**蓝色**条表示降低风险。")
                 
                 if final_explanation is not None:
                     try:
-                        # 绘制瀑布图
+                        # 创建画布
                         fig, ax = plt.subplots(figsize=(10, 6))
                         
-                        # 【最后一道防线】绘图前再次强制确认参数
-                        plt.rcParams['axes.unicode_minus'] = False
-                        plt.rcParams['font.sans-serif'] = ['SimHei']
+                        # 【核心修复】在绘图的瞬间，强制锁定字体和负号设置
+                        # 这样可以覆盖 SHAP 可能带来的样式重置
+                        rc_params = {
+                            'font.sans-serif': ['SimHei'],
+                            'axes.unicode_minus': False,
+                            'font.size': 12  # 适当调整字号
+                        }
                         
-                        shap.plots.waterfall(final_explanation, show=False, max_display=14)
+                        # 使用 context manager 确保设置仅对当前图生效且具备最高优先级
+                        with plt.rc_context(rc_params):
+                            shap.plots.waterfall(final_explanation, show=False, max_display=14)
+                        
+                        # 再次确保坐标轴使用的是正确的设置（双重保险）
+                        ax = plt.gca()
+                        for label in ax.get_xticklabels() + ax.get_yticklabels():
+                            label.set_fontname('SimHei')
                         
                         plt.tight_layout()
                         st.pyplot(fig)
+                        
                     except Exception as plot_err:
                          st.error(f"绘图失败。调试信息: {plot_err}")
+                         # 打印详细堆栈以便调试
+                         import traceback
+                         st.text(traceback.format_exc())
                 else:
                     st.warning("无法生成 SHAP 图，请检查输入数据或模型结构。")
             
@@ -305,3 +297,4 @@ if st.sidebar.button("🔍 开始预测风险"):
         st.error("系统错误：模型未加载。")
 else:
     st.info("👈 请在左侧侧边栏输入患者的临床参数，然后点击“开始预测风险”按钮。")
+
