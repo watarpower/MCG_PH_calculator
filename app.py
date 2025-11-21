@@ -224,45 +224,55 @@ if st.sidebar.button("🔍 开始预测风险"):
                 if shap_values_to_plot is not None:
                     try:
                         # =================================================
-                        # 【终极修复】手动拆解数据，绕过对象类型检查
-                        # 解决 ufunc 'add' ... dtype('<U3') 错误
+                        # 🛠️ 暴力清洗数据 (解决 dtype='<U3' 报错的终极方案)
                         # =================================================
                         
-                        # 1. 提取并清理基准值 (base_value)
+                        # 1. 提取基准值 (Base Value)
+                        # 必须是纯 float，不能是 array 或 list
                         base_val = shap_values_to_plot.base_values
-                        # 如果是数组，提取标量
-                        if isinstance(base_val, (np.ndarray, list)):
-                             if np.size(base_val) > 0:
-                                base_val = base_val.item(0) if np.size(base_val) == 1 else base_val[0]
+                        if hasattr(base_val, 'item'): 
+                            base_val = base_val.item()
                         
-                        # 2. 提取并清理 SHAP 值 (shap_values)
+                        # 2. 提取 SHAP 贡献值 (SHAP values)
+                        # 必须是纯 numpy float 数组
                         shap_vals = shap_values_to_plot.values
+                        # 如果是多维 (1, N)，展平为 (N,)
                         if len(shap_vals.shape) > 1:
-                            shap_vals = shap_vals.flatten() # 确保是一维数组
+                            shap_vals = shap_vals.flatten()
                         
-                        # 3. 提取并清理特征原始值 (data)
-                        feature_vals = shap_values_to_plot.data
-                        # 强制转为 numpy 数组，剥离 Pandas 属性
-                        if hasattr(feature_vals, 'values'):
-                            feature_vals = feature_vals.values
-                        if hasattr(feature_vals, 'to_numpy'): # 双重保险
-                            feature_vals = feature_vals.to_numpy()
-                        feature_vals = np.array(feature_vals) # 三重保险
-                        
-                        # 确保是一维数组
-                        if len(feature_vals.shape) > 1:
-                            feature_vals = feature_vals.flatten()
+                        # 3. 重新构建特征值 (Feature values)
+                        # 【关键】不使用 shap_values_to_plot.data，因为它可能被污染
+                        # 直接从之前清洗过的 data_for_shap 拿数据
+                        if isinstance(data_for_shap, pd.DataFrame):
+                            feature_vals = data_for_shap.values
+                        else:
+                            feature_vals = data_for_shap
+                            
+                        # 双重保险：强制转为 float64，任何非数字强制变 0
+                        # 这步操作会把所有字符串 "123" 变成数字 123.0
+                        feature_vals = np.array(feature_vals).flatten()
+                        try:
+                            feature_vals = feature_vals.astype(float)
+                        except ValueError:
+                            # 如果直接转失败，说明有怪字符，用 pandas 暴力转
+                            feature_vals = pd.to_numeric(feature_vals, errors='coerce')
+                            feature_vals = np.nan_to_num(feature_vals, nan=0.0)
 
                         # 4. 提取特征名
                         feature_names_disp = shap_values_to_plot.feature_names
+                        # 如果特征名也是 None，手动补全
+                        if feature_names_disp is None:
+                            feature_names_disp = [f"Feature {i}" for i in range(len(feature_vals))]
 
-                        # 5. 调用底层绘图函数
+                        # =================================================
+                        # 绘制图像
+                        # =================================================
                         fig = shap.force_plot(
-                            base_val, 
-                            shap_vals, 
-                            feature_vals, 
+                            base_value=float(base_val),  # 强制转 float
+                            shap_values=shap_vals, 
+                            features=feature_vals,       # 这里现在绝对是纯数字了
                             feature_names=feature_names_disp, 
-                            matplotlib=True, # 必须开启
+                            matplotlib=True, 
                             show=False
                         )
                         
@@ -270,7 +280,9 @@ if st.sidebar.button("🔍 开始预测风险"):
                         st.pyplot(fig)
                         
                     except Exception as plot_err:
-                         st.error(f"绘图失败。详细调试信息: {plot_err}")
+                         st.error(f"绘图依然失败。这可能是 matplotlib 版本兼容性问题。\n\n调试信息: {plot_err}")
+                         # 如果还是失败，打印数据类型帮助调试
+                         st.write("Debug Data Types:", type(base_val), shap_vals.dtype, feature_vals.dtype)
                 else:
                     st.warning("无法生成 SHAP 图，请检查输入数据或模型结构。")
             
@@ -280,3 +292,4 @@ if st.sidebar.button("🔍 开始预测风险"):
         st.error("系统错误：模型未加载。")
 else:
     st.info("👈 请在左侧侧边栏输入患者的临床参数，然后点击“开始预测风险”按钮。")
+
