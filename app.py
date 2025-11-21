@@ -5,10 +5,11 @@ import joblib
 import shap
 import matplotlib.pyplot as plt
 import matplotlib
+import matplotlib.font_manager as fm
 from sklearn.base import BaseEstimator, TransformerMixin
 
 # ==========================================
-# 1. 核心配置与中文字体设置
+# 1. 核心配置与中文字体设置 (智能适配版)
 # ==========================================
 st.set_page_config(
     page_title="肺动脉高压风险预测系统",
@@ -16,18 +17,47 @@ st.set_page_config(
     layout="wide"
 )
 
-# 解决Matplotlib中文显示问题
-font_list = ['SimHei', 'Microsoft YaHei', 'WenQuanYi Micro Hei', 'Noto Sans CJK SC', 'DejaVu Sans']
-plt.rcParams['font.sans-serif'] = font_list
-plt.rcParams['axes.unicode_minus'] = False 
-matplotlib.rc('font', family=font_list[0])
+# --- 字体自动检测与设置逻辑 ---
+# 目的：同时兼容 Windows (本地开发) 和 Linux (Streamlit Cloud 服务器)
+# 优先寻找列表中的字体，一旦找到即设为默认
+font_candidates = [
+    'WenQuanYi Micro Hei', # Streamlit Cloud (Linux) 常用中文字体
+    'SimHei',              # Windows 黑体
+    'Microsoft YaHei',     # Windows 微软雅黑
+    'Noto Sans CJK SC',    # Linux 通用
+    'DejaVu Sans'          # 英文保底
+]
 
-# 自定义CSS样式
+system_fonts = set(f.name for f in fm.fontManager.ttflist)
+found_font = 'DejaVu Sans' # 默认保底
+
+for font in font_candidates:
+    if font in system_fonts:
+        found_font = font
+        break
+
+# 如果在 Linux 环境下没检测到，尝试强制指定文泉驿 (依赖 packages.txt 安装)
+if found_font == 'DejaVu Sans':
+    # 检查是否可能在 Streamlit Cloud 环境
+    try:
+        import os
+        if os.path.exists('/usr/share/fonts'):
+             found_font = 'WenQuanYi Micro Hei'
+    except:
+        pass
+
+# 应用字体设置
+plt.rcParams['font.family'] = 'sans-serif'
+plt.rcParams['font.sans-serif'] = [found_font] + font_candidates
+plt.rcParams['axes.unicode_minus'] = False 
+matplotlib.rc('font', family=found_font)
+
+# --- 自定义 CSS 样式 ---
 st.markdown("""
     <style>
     .main { background-color: #f9f9f9; }
-    h1 { color: #2c3e50; font-weight: bold; font-family: "Microsoft YaHei", sans-serif; }
-    h3 { color: #34495e; font-family: "Microsoft YaHei", sans-serif; }
+    h1 { color: #2c3e50; font-weight: bold; font-family: sans-serif; }
+    h3 { color: #34495e; font-family: sans-serif; }
     .stButton>button {
         background-color: #007bff; color: white; border-radius: 5px; height: 3em; width: 100%; font-size: 16px;
     }
@@ -41,7 +71,7 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. 定义必要的类
+# 2. 定义必要的类 (防止模型加载 AttributeError)
 # ==========================================
 class DataFrameConverter(BaseEstimator, TransformerMixin):
     def __init__(self):
@@ -56,12 +86,14 @@ class DataFrameConverter(BaseEstimator, TransformerMixin):
 # ==========================================
 @st.cache_resource
 def load_model_and_features():
+    # 加载模型
     try:
         model = joblib.load('final_model_RF.pkl')
     except FileNotFoundError:
         st.error("❌ 错误：未找到模型文件 'final_model_RF.pkl'。")
         return None, None
 
+    # 加载特征名称
     try:
         with open('selected_features_1SE_建模数据.txt', 'r', encoding='utf-8') as f:
             content = f.read().strip()
@@ -87,6 +119,7 @@ if model and feature_names:
     input_data = {}
     
     for feature in feature_names:
+        # 简单的启发式规则：根据名字判断输入类型
         feature_lower = feature.lower()
         if 'sex' in feature_lower or 'gender' in feature_lower or 'code' in feature_lower:
             input_data[feature] = st.sidebar.selectbox(f"{feature} (分类变量)", options=[0, 1], index=0)
@@ -96,7 +129,7 @@ if model and feature_names:
     input_df = pd.DataFrame([input_data], columns=feature_names)
 
 # ==========================================
-# 5. 主界面：预测逻辑
+# 5. 主界面：预测与解释逻辑
 # ==========================================
 st.title("🏥 基于心磁成像装置的肺动脉高压检测计算器")
 st.markdown("基于机器学习随机森林算法构建 | 仅供科研参考")
@@ -116,20 +149,19 @@ if st.sidebar.button("🔍 开始预测风险"):
                 probability = 1.0 if prediction == 1 else 0.0
 
             # ---------------------------
-            # B. 计算 SHAP 值 (修复：名字丢失和数值缩放问题)
+            # B. 计算 SHAP 值 (核心修复部分)
             # ---------------------------
             final_explanation = None
             try:
-                # 1. 拆解 Pipeline
+                # 1. 拆解 Pipeline，获取预处理后的数学输入
                 if hasattr(model, 'steps') or hasattr(model, 'named_steps'):
                     final_estimator = model._final_estimator
                     preprocessor = model[:-1]
                     
-                    # 关键步骤：获取预处理后的数据（用于计算真实的 SHAP 贡献）
-                    # 这个数据是经过缩放的（例如 -0.503），模型只认这个
+                    # 【关键】获取模型真正“看到”的数据（经过归一化/标准化处理的数据）
                     processed_data = preprocessor.transform(input_df)
                     
-                    # 确保格式正确
+                    # 格式标准化
                     if hasattr(processed_data, "toarray"):
                         processed_data = processed_data.toarray()
                     processed_data_df = pd.DataFrame(processed_data)
@@ -139,38 +171,36 @@ if st.sidebar.button("🔍 开始预测风险"):
                     final_estimator = model
                     processed_data_df = input_df
 
-                # 2. 计算 SHAP 值 (使用缩放后的数据)
+                # 2. 计算数学上的 SHAP 贡献值
                 try:
                     explainer = shap.TreeExplainer(final_estimator)
                     shap_values_obj = explainer(processed_data_df)
                 except Exception:
+                    # 备用方案
                     explainer = shap.TreeExplainer(final_estimator, data=processed_data_df, model_output="probability")
                     shap_values_obj = explainer(processed_data_df)
 
-                # 3. 移花接木：构建用于展示的 Explanation 对象
-                # 这一步是解决你问题的核心！
+                # 3. “移花接木”：构建用于展示的 Explanation 对象
+                # 目的：图表显示真实的 SHAP 贡献，但显示的数值是用户输入的原始值（如 0），而非 -0.5
                 
-                # (a) 提取 SHAP 贡献值 (Effect)
+                # (a) 提取 SHAP 值
                 if len(shap_values_obj.values.shape) == 3:
-                    shap_contribution = shap_values_obj.values[0, :, 1] # 取正类
+                    # 二分类模型，取正类 (索引1)
+                    shap_contribution = shap_values_obj.values[0, :, 1]
                     base_val = shap_values_obj.base_values[0, 1]
                 else:
                     shap_contribution = shap_values_obj.values[0]
                     base_val = shap_values_obj.base_values[0]
 
-                # (b) 提取用户原始输入 (Display Value) -> 解决显示 -0.503 的问题
-                # 直接从 input_df 拿数据，这显示的就是你输入的 0
+                # (b) 提取用户原始输入 (Display Value)
                 original_input_values = input_df.iloc[0].values
 
-                # (c) 提取原始特征名 (Feature Names) -> 解决显示数字索引的问题
-                # 直接使用全局加载的 feature_names
-                
-                # (d) 手动组装 Explanation 对象
+                # (c) 手动组装 Explanation 对象
                 final_explanation = shap.Explanation(
-                    values=shap_contribution,       # 里的数值是模型计算出的贡献
-                    base_values=base_val,           # 基准值
-                    data=original_input_values,     # 这里放原始数据（0），图上就会显示 0
-                    feature_names=feature_names     # 这里放原始名字，图上就会显示名字
+                    values=shap_contribution,       # 模型计算出的贡献值 (不变)
+                    base_values=base_val,           # 基准值 (不变)
+                    data=original_input_values,     # 【核心修复】使用原始输入数据，让图表显示 "0" 而非 "-0.5"
+                    feature_names=feature_names     # 【核心修复】使用 txt 中的中文特征名
                 )
 
             except Exception as e:
@@ -186,17 +216,19 @@ if st.sidebar.button("🔍 开始预测风险"):
                 st.markdown("### 📊 预测风险评分")
                 risk_percent = probability * 100
                 
+                # === 约登指数阈值设定 ===
                 optimal_threshold = 35.703 
                 youden_index = 0.771
+                # ======================
 
                 if risk_percent > optimal_threshold:
-                    color = "#dc3545"
+                    color = "#dc3545" # 红色
                     risk_label = "高风险 (High Risk)"
                     icon = "⚠️"
                     advice_box = "warning"
                     advice_text = f"模型预测概率 ({risk_percent:.1f}%) 已超过最佳截断值 ({optimal_threshold:.1f}%)。\n\n**建议：** 考虑进行超声心动图或右心导管检查以进一步确诊。"
                 else:
-                    color = "#28a745"
+                    color = "#28a745" # 绿色
                     risk_label = "低风险 (Low Risk)"
                     icon = "✅"
                     advice_box = "success"
@@ -225,17 +257,18 @@ if st.sidebar.button("🔍 开始预测风险"):
                     st.success(advice_text)
 
             with col2:
-                st.markdown("### 🔍 SHAP 可解释性分析")
-                st.markdown("瀑布图展示了各特征对预测结果的贡献：")
+                st.markdown("### 🔍 SHAP 可解释性分析 (瀑布图)")
+                st.markdown("下图展示了各特征对预测结果的贡献：**红色**条表示增加风险，**蓝色**条表示降低风险。")
                 
                 if final_explanation is not None:
                     try:
-                        # 绘制瀑布图
+                        # 绘制瀑布图 (Waterfall Plot)
+                        # 相比 Force Plot，瀑布图更稳定且适合解释单样本，且完美支持手动 Explanation 对象
                         fig, ax = plt.subplots(figsize=(10, 6))
                         
-                        # 关键：直接画我们手动组装好的 final_explanation
                         shap.plots.waterfall(final_explanation, show=False, max_display=14)
                         
+                        # 优化布局，防止文字被截断
                         plt.tight_layout()
                         st.pyplot(fig)
                         
