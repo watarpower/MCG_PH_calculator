@@ -17,12 +17,13 @@ st.set_page_config(
 )
 
 # 解决Matplotlib中文显示问题
+# 涵盖 Windows(SimHei) 和 Linux/Streamlit Cloud(WenQuanYi, Noto Sans)
 font_list = ['SimHei', 'Microsoft YaHei', 'WenQuanYi Micro Hei', 'Noto Sans CJK SC', 'DejaVu Sans']
 plt.rcParams['font.sans-serif'] = font_list
 plt.rcParams['axes.unicode_minus'] = False 
 matplotlib.rc('font', family=font_list[0])
 
-# 自定义CSS样式
+# 自定义CSS样式 (美化界面，模仿学术期刊风格)
 st.markdown("""
     <style>
     .main { background-color: #f9f9f9; }
@@ -41,7 +42,7 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. 定义必要的类
+# 2. 定义必要的类 (防止 AttributeError)
 # ==========================================
 class DataFrameConverter(BaseEstimator, TransformerMixin):
     def __init__(self):
@@ -56,12 +57,14 @@ class DataFrameConverter(BaseEstimator, TransformerMixin):
 # ==========================================
 @st.cache_resource
 def load_model_and_features():
+    # 加载模型
     try:
         model = joblib.load('final_model_RF.pkl')
     except FileNotFoundError:
         st.error("❌ 错误：未找到模型文件 'final_model_RF.pkl'。")
         return None, None
 
+    # 加载特征名称
     try:
         with open('selected_features_1SE_建模数据.txt', 'r', encoding='utf-8') as f:
             content = f.read().strip()
@@ -85,6 +88,7 @@ if model and feature_names:
     st.sidebar.markdown("请在下方输入临床特征值：")
     
     input_data = {}
+    
     for feature in feature_names:
         feature_lower = feature.lower()
         if 'sex' in feature_lower or 'gender' in feature_lower or 'code' in feature_lower:
@@ -92,36 +96,44 @@ if model and feature_names:
         else:
             input_data[feature] = st.sidebar.number_input(f"{feature} (数值)", value=0.0, format="%.2f")
 
+    # 转换为 DataFrame
     input_df = pd.DataFrame([input_data], columns=feature_names)
 
 # ==========================================
 # 5. 主界面：预测逻辑
 # ==========================================
 st.title("🏥 基于心磁成像装置的肺动脉高压检测计算器")
-st.markdown("基于机器学习随机森林算法构建")
+st.markdown("基于机器学习随机森林算法构建 | 仅供科研参考")
 st.markdown("---")
 
 if st.sidebar.button("🔍 开始预测风险"):
     if model and feature_names:
         with st.spinner('正在计算模型预测概率与 SHAP 解释值，请稍候...'):
             
+            # ---------------------------
             # A. 计算预测概率
+            # ---------------------------
             try:
                 probability = model.predict_proba(input_df)[0, 1]
             except:
                 prediction = model.predict(input_df)[0]
                 probability = 1.0 if prediction == 1 else 0.0
 
-            # B. 计算 SHAP 值 (含修复)
+            # ---------------------------
+            # B. 计算 SHAP 值 (稳健版)
+            # ---------------------------
             shap_values_to_plot = None
             try:
-                # 1. 处理 Pipeline
+                # 1. 处理 Pipeline 结构
                 if hasattr(model, 'steps') or hasattr(model, 'named_steps'):
                     final_estimator = model._final_estimator
                     preprocessor = model[:-1]
+                    
+                    # 预处理数据
                     processed_data = preprocessor.transform(input_df)
                     if hasattr(processed_data, "toarray"):
                         processed_data = processed_data.toarray()
+                    
                     try:
                         processed_feature_names = preprocessor.get_feature_names_out()
                         data_for_shap = pd.DataFrame(processed_data, columns=processed_feature_names)
@@ -132,14 +144,11 @@ if st.sidebar.button("🔍 开始预测风险"):
                     data_for_shap = input_df
 
                 # ==================================================
-                # 【关键修复】强制数据类型转换，解决 ufunc 'add' 报错
+                # 【第一道防线】强制数值转换
                 # ==================================================
-                data_for_shap = data_for_shap.apply(pd.to_numeric, errors='coerce')
-                data_for_shap = data_for_shap.fillna(0)
-                data_for_shap = data_for_shap.astype('float64')
-                # ==================================================
+                data_for_shap = data_for_shap.apply(pd.to_numeric, errors='coerce').fillna(0).astype('float64')
 
-                # 2. 使用 TreeExplainer
+                # 2. 计算 SHAP 值
                 try:
                     explainer = shap.TreeExplainer(final_estimator)
                     shap_values = explainer(data_for_shap)
@@ -147,7 +156,7 @@ if st.sidebar.button("🔍 开始预测风险"):
                     explainer = shap.TreeExplainer(final_estimator, data=data_for_shap, model_output="probability")
                     shap_values = explainer(data_for_shap)
 
-                # 3. 提取绘图数据
+                # 3. 提取单条样本 (二分类取正类)
                 if len(shap_values.values.shape) == 3:
                     shap_values_to_plot = shap_values[0, :, 1]
                 else:
@@ -157,24 +166,30 @@ if st.sidebar.button("🔍 开始预测风险"):
                 st.error(f"SHAP 计算模块出错: {str(e)}")
                 shap_values_to_plot = None
 
-            # C. 结果展示
+            # ---------------------------
+            # C. 结果展示区域
+            # ---------------------------
             col1, col2 = st.columns([1, 2])
 
             with col1:
                 st.markdown("### 📊 预测风险评分")
                 risk_percent = probability * 100
                 
+                # === 约登指数逻辑 ===
                 optimal_threshold = 35.703 
                 youden_index = 0.771
+                # ==================
 
                 if risk_percent > optimal_threshold:
-                    color = "#dc3545"
+                    # 高风险
+                    color = "#dc3545" # 红色
                     risk_label = "高风险 (High Risk)"
                     icon = "⚠️"
                     advice_box = "warning"
                     advice_text = f"模型预测概率 ({risk_percent:.1f}%) 已超过最佳截断值 ({optimal_threshold:.1f}%)。\n\n**建议：** 考虑进行超声心动图或右心导管检查以进一步确诊。"
                 else:
-                    color = "#28a745"
+                    # 低风险
+                    color = "#28a745" # 绿色
                     risk_label = "低风险 (Low Risk)"
                     icon = "✅"
                     advice_box = "success"
@@ -202,62 +217,66 @@ if st.sidebar.button("🔍 开始预测风险"):
                 else:
                     st.success(advice_text)
 
-with col2:
+            with col2:
                 st.markdown("### 🔍 SHAP 可解释性分析 (力图)")
                 st.markdown("下图展示了各特征如何推动风险值 **升高 (红色)** 或 **降低 (蓝色)**：")
                 
                 if shap_values_to_plot is not None:
                     try:
                         # =================================================
-                        # 🛠️ 终极修复：手动拆解数据，绕过对象类型检查
+                        # 【终极修复】手动拆解数据，绕过对象类型检查
+                        # 解决 ufunc 'add' ... dtype('<U3') 错误
                         # =================================================
                         
-                        # 1. 提取基准值 (Base Value)
-                        # 确保它是纯粹的浮点数 (float)，而不是数组
-                        base_value = shap_values_to_plot.base_values
-                        if isinstance(base_value, np.ndarray):
-                            base_value = base_value.item()
-                            
-                        # 2. 提取 SHAP 贡献值 (SHAP values)
-                        # 确保它是 numpy 数组
+                        # 1. 提取并清理基准值 (base_value)
+                        base_val = shap_values_to_plot.base_values
+                        # 如果是数组，提取标量
+                        if isinstance(base_val, (np.ndarray, list)):
+                             if np.size(base_val) > 0:
+                                base_val = base_val.item(0) if np.size(base_val) == 1 else base_val[0]
+                        
+                        # 2. 提取并清理 SHAP 值 (shap_values)
                         shap_vals = shap_values_to_plot.values
+                        if len(shap_vals.shape) > 1:
+                            shap_vals = shap_vals.flatten() # 确保是一维数组
                         
-                        # 3. 提取特征原始值 (Feature values)
-                        # 强制转换为 numpy 纯数组，丢掉 Pandas 索引和表头
-                        features_display = shap_values_to_plot.data
-                        if hasattr(features_display, 'values'):
-                            features_display = features_display.values
-                        # 如果是多维的，展平成一维
-                        if isinstance(features_display, np.ndarray):
-                            features_display = features_display.flatten()
-                            
-                        # 4. 提取特征名称
-                        feature_names_display = shap_values_to_plot.feature_names
+                        # 3. 提取并清理特征原始值 (data)
+                        feature_vals = shap_values_to_plot.data
+                        # 强制转为 numpy 数组，剥离 Pandas 属性
+                        if hasattr(feature_vals, 'values'):
+                            feature_vals = feature_vals.values
+                        if hasattr(feature_vals, 'to_numpy'): # 双重保险
+                            feature_vals = feature_vals.to_numpy()
+                        feature_vals = np.array(feature_vals) # 三重保险
                         
-                        # 5. 绘制力图 (使用 force_plot 而不是 plots.force)
-                        # 这种方式对数据类型最宽容
+                        # 确保是一维数组
+                        if len(feature_vals.shape) > 1:
+                            feature_vals = feature_vals.flatten()
+
+                        # 4. 提取特征名
+                        feature_names_disp = shap_values_to_plot.feature_names
+
+                        # 5. 调用底层绘图函数
                         fig = shap.force_plot(
-                            base_value, 
+                            base_val, 
                             shap_vals, 
-                            features_display, 
-                            feature_names=feature_names_display, 
-                            matplotlib=True, # 必须为 True 才能在 Streamlit 显示
+                            feature_vals, 
+                            feature_names=feature_names_disp, 
+                            matplotlib=True, # 必须开启
                             show=False
                         )
                         
-                        # 调整布局并展示
                         plt.tight_layout()
                         st.pyplot(fig)
                         
                     except Exception as plot_err:
-                         st.error(f"绘图失败。这通常是由于数据类型不兼容(非数值)或字体配置引起的。\n\n错误详情: {plot_err}")
+                         st.error(f"绘图失败。详细调试信息: {plot_err}")
                 else:
                     st.warning("无法生成 SHAP 图，请检查输入数据或模型结构。")
             
             st.markdown("---")
-            st.caption(f"说明： 本工具采用约登指数 (Youden Index = {youden_index}) 确定的最佳截断值 {optimal_threshold/100:.5f} 进行风险分层。结果仅供科研参考。")
+            st.caption(f"**说明：** 本工具采用约登指数 (Youden Index = {youden_index}) 确定的最佳截断值 {optimal_threshold/100:.5f} 进行风险分层。结果仅供科研参考。")
     else:
         st.error("系统错误：模型未加载。")
 else:
     st.info("👈 请在左侧侧边栏输入患者的临床参数，然后点击“开始预测风险”按钮。")
-
