@@ -106,54 +106,80 @@ if st.sidebar.button("🔍 开始预测风险"):
     if model and feature_names:
         with st.spinner('正在计算模型预测概率与 SHAP 解释值，请稍候...'):
             
+            # ---------------------------
             # A. 计算预测概率
+            # ---------------------------
             try:
                 probability = model.predict_proba(input_df)[0, 1]
             except:
                 prediction = model.predict(input_df)[0]
                 probability = 1.0 if prediction == 1 else 0.0
 
-            # B. 计算 SHAP 值
-            shap_values_to_plot = None
+            # ---------------------------
+            # B. 计算 SHAP 值 (修复：名字丢失和数值缩放问题)
+            # ---------------------------
+            final_explanation = None
             try:
-                # 1. 处理 Pipeline
+                # 1. 拆解 Pipeline
                 if hasattr(model, 'steps') or hasattr(model, 'named_steps'):
                     final_estimator = model._final_estimator
                     preprocessor = model[:-1]
+                    
+                    # 关键步骤：获取预处理后的数据（用于计算真实的 SHAP 贡献）
+                    # 这个数据是经过缩放的（例如 -0.503），模型只认这个
                     processed_data = preprocessor.transform(input_df)
+                    
+                    # 确保格式正确
                     if hasattr(processed_data, "toarray"):
                         processed_data = processed_data.toarray()
-                    try:
-                        processed_feature_names = preprocessor.get_feature_names_out()
-                        data_for_shap = pd.DataFrame(processed_data, columns=processed_feature_names)
-                    except:
-                        data_for_shap = pd.DataFrame(processed_data)
+                    processed_data_df = pd.DataFrame(processed_data)
+
                 else:
+                    # 如果不是 Pipeline
                     final_estimator = model
-                    data_for_shap = input_df
+                    processed_data_df = input_df
 
-                # 强制清理数据
-                data_for_shap = data_for_shap.apply(pd.to_numeric, errors='coerce').fillna(0).astype('float64')
-
-                # 2. 计算 SHAP
+                # 2. 计算 SHAP 值 (使用缩放后的数据)
                 try:
                     explainer = shap.TreeExplainer(final_estimator)
-                    shap_values = explainer(data_for_shap)
+                    shap_values_obj = explainer(processed_data_df)
                 except Exception:
-                    explainer = shap.TreeExplainer(final_estimator, data=data_for_shap, model_output="probability")
-                    shap_values = explainer(data_for_shap)
+                    explainer = shap.TreeExplainer(final_estimator, data=processed_data_df, model_output="probability")
+                    shap_values_obj = explainer(processed_data_df)
 
-                # 3. 提取单条样本
-                if len(shap_values.values.shape) == 3:
-                    shap_values_to_plot = shap_values[0, :, 1]
+                # 3. 移花接木：构建用于展示的 Explanation 对象
+                # 这一步是解决你问题的核心！
+                
+                # (a) 提取 SHAP 贡献值 (Effect)
+                if len(shap_values_obj.values.shape) == 3:
+                    shap_contribution = shap_values_obj.values[0, :, 1] # 取正类
+                    base_val = shap_values_obj.base_values[0, 1]
                 else:
-                    shap_values_to_plot = shap_values[0]
+                    shap_contribution = shap_values_obj.values[0]
+                    base_val = shap_values_obj.base_values[0]
+
+                # (b) 提取用户原始输入 (Display Value) -> 解决显示 -0.503 的问题
+                # 直接从 input_df 拿数据，这显示的就是你输入的 0
+                original_input_values = input_df.iloc[0].values
+
+                # (c) 提取原始特征名 (Feature Names) -> 解决显示数字索引的问题
+                # 直接使用全局加载的 feature_names
+                
+                # (d) 手动组装 Explanation 对象
+                final_explanation = shap.Explanation(
+                    values=shap_contribution,       # 里的数值是模型计算出的贡献
+                    base_values=base_val,           # 基准值
+                    data=original_input_values,     # 这里放原始数据（0），图上就会显示 0
+                    feature_names=feature_names     # 这里放原始名字，图上就会显示名字
+                )
 
             except Exception as e:
                 st.error(f"SHAP 计算模块出错: {str(e)}")
-                shap_values_to_plot = None
+                final_explanation = None
 
-            # C. 结果展示
+            # ---------------------------
+            # C. 结果展示区域
+            # ---------------------------
             col1, col2 = st.columns([1, 2])
 
             with col1:
@@ -200,46 +226,16 @@ if st.sidebar.button("🔍 开始预测风险"):
 
             with col2:
                 st.markdown("### 🔍 SHAP 可解释性分析")
-                st.markdown("下图 (瀑布图) 展示了各特征对风险值的贡献：**红色**表示增加风险，**蓝色**表示降低风险。")
+                st.markdown("瀑布图展示了各特征对预测结果的贡献：")
                 
-                if shap_values_to_plot is not None:
+                if final_explanation is not None:
                     try:
-                        # =================================================
-                        # 🛠️ 切换方案：使用 Waterfall Plot (瀑布图)
-                        # 彻底避开 Force Plot 在 Matplotlib 下的 Bug
-                        # =================================================
-                        
-                        # 1. 提取数据 (保持之前的清理逻辑)
-                        base_val = shap_values_to_plot.base_values
-                        if hasattr(base_val, 'item'): base_val = base_val.item()
-                        
-                        shap_vals = shap_values_to_plot.values
-                        if len(shap_vals.shape) > 1: shap_vals = shap_vals.flatten()
-                            
-                        if isinstance(data_for_shap, pd.DataFrame):
-                            feature_vals = data_for_shap.values.flatten()
-                        else:
-                            feature_vals = np.array(data_for_shap).flatten()
-                            
-                        feature_names_disp = shap_values_to_plot.feature_names
-                        if feature_names_disp is None:
-                            feature_names_disp = [f"F{i}" for i in range(len(feature_vals))]
-
-                        # 2. 手动构建 Explanation 对象 (关键步骤)
-                        # 这样可以保证喂给绘图函数的是最纯净的数据
-                        exp = shap.Explanation(
-                            values=shap_vals,
-                            base_values=base_val,
-                            data=feature_vals,
-                            feature_names=feature_names_disp
-                        )
-
-                        # 3. 绘制瀑布图
-                        # max_display=12 只显示最重要的12个特征，避免图表太长
+                        # 绘制瀑布图
                         fig, ax = plt.subplots(figsize=(10, 6))
-                        shap.plots.waterfall(exp, show=False, max_display=12)
                         
-                        # 优化布局
+                        # 关键：直接画我们手动组装好的 final_explanation
+                        shap.plots.waterfall(final_explanation, show=False, max_display=14)
+                        
                         plt.tight_layout()
                         st.pyplot(fig)
                         
