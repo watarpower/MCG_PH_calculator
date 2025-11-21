@@ -22,7 +22,7 @@ st.set_page_config(
 def configure_font_environment():
     """
     下载 SimHei 字体并强制 Matplotlib 使用它。
-    解决策略：SimHei (主字体) + Unicode Minus False (解决负号)。
+    关键策略：SimHei (主字体) + unicode_minus=False (解决负号)。
     """
     font_filename = "SimHei.ttf"
     # 使用极其稳定的 jsDelivr CDN 加速下载
@@ -48,10 +48,15 @@ def configure_font_environment():
             fm.fontManager.addfont(font_filename)
             
             # 3. 全局样式设置
-            # 强制 SimHei 为第一优先级
+            # 强制 SimHei 为第一优先级，解决中文乱码
             plt.rcParams['font.sans-serif'] = ['SimHei'] 
-            # 关键：SimHei 不支持 Unicode 减号，必须设为 False 用 ASCII 短横线代替
+            
+            # 【关键代码】复刻你本地代码的逻辑！
+            # SimHei 不支持数学减号(U+2212)，必须设为 False 用键盘短横线(ASCII)代替
             plt.rcParams['axes.unicode_minus'] = False 
+            
+            # 双重保险：确保 SHAP 内部绘图引擎也收到这个指令
+            matplotlib.rc('axes', unicode_minus=False)
             
             return True
         except Exception as e:
@@ -175,7 +180,6 @@ if st.sidebar.button("🔍 开始预测风险"):
                     processed_data_df = input_df
 
                 # 2. 计算 SHAP 值
-                # 统一变量名 shap_values_obj
                 shap_values_obj = None 
                 try:
                     explainer = shap.TreeExplainer(final_estimator)
@@ -263,15 +267,12 @@ if st.sidebar.button("🔍 开始预测风险"):
                         # 绘制瀑布图
                         fig, ax = plt.subplots(figsize=(10, 6))
                         
-                        # 绘图前再次强制应用字体设置 (双重保险)
-                        # 1. 必须是 SimHei，保证中文
+                        # 【最终确认】绘图前再次强制应用本地代码成功的逻辑
                         plt.rcParams['font.sans-serif'] = ['SimHei']
-                        # 2. 必须关闭 Unicode 减号，保证负号显示为短横线
                         plt.rcParams['axes.unicode_minus'] = False
                         
                         shap.plots.waterfall(final_explanation, show=False, max_display=14)
                         
-                        # 调整布局
                         plt.tight_layout()
                         st.pyplot(fig)
                     except Exception as plot_err:
@@ -285,3 +286,14 @@ if st.sidebar.button("🔍 开始预测风险"):
         st.error("系统错误：模型未加载。")
 else:
     st.info("👈 请在左侧侧边栏输入患者的临床参数，然后点击“开始预测风险”按钮。")
+```
+
+### 核心改动说明（请看第 56 行）：
+
+```python
+# 1. 强制 SimHei 为第一优先级 (解决中文方框)
+plt.rcParams['font.sans-serif'] = ['SimHei']
+
+# 2. 强制关闭 Unicode 减号 (解决负号方框)
+# 这一行完全复刻了你本地代码的效果！
+plt.rcParams['axes.unicode_minus'] = False
