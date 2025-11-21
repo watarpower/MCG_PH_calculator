@@ -260,37 +260,69 @@ if st.sidebar.button("🔍 开始预测风险"):
                 else:
                     st.success(advice_text)
 
-            with col2:
+with col2:
                 st.markdown("### 🔍 SHAP 可解释性分析 (瀑布图)")
                 st.markdown("下图展示了各特征对预测结果的贡献：**红色**条表示增加风险，**蓝色**条表示降低风险。")
                 
                 if final_explanation is not None:
                     try:
-                        # 创建画布
+                        # 1. 创建画布
                         fig, ax = plt.subplots(figsize=(10, 6))
                         
-                        # 【核心修复逻辑】
-                        # 使用 context manager 强制在绘图期间应用字体设置
-                        # 这可以覆盖 SHAP 内部可能的样式重置，并解决负号显示问题
-                        rc_params = {
-                            'font.sans-serif': ['SimHei'],
-                            'axes.unicode_minus': False,
-                            'font.size': 12
-                        }
+                        # 2. 基础绘图 (此时先不纠结乱码，先把图画出来)
+                        # 我们先暂时设为 False，尽量让 SHAP 使用连字符
+                        plt.rcParams['axes.unicode_minus'] = False
+                        shap.plots.waterfall(final_explanation, show=False, max_display=14)
                         
-                        with plt.rc_context(rc_params):
-                            # 绘制瀑布图
-                            shap.plots.waterfall(final_explanation, show=False, max_display=14)
+                        # =================================================
+                        # 3. 【核心修复】后处理：分区域强制指定字体
+                        # =================================================
                         
-                        # 再次确保坐标轴字体正确 (双重保险)
+                        # 获取当前坐标轴
                         ax = plt.gca()
-                        for label in ax.get_xticklabels() + ax.get_yticklabels():
-                            label.set_fontname('SimHei')
-                            
+                        
+                        # 准备两种字体
+                        # A. 中文字体 (用于 Y 轴特征名)
+                        chinese_font = fm.FontProperties(fname="SimHei.ttf") 
+                        # B. 英文字体 (用于 X 轴数值和图中数字，确保负号显示)
+                        english_font = fm.FontProperties(family='DejaVu Sans') 
+
+                        # --- 修复 A: Y 轴标签 (特征名 - 需要中文) ---
+                        # 遍历每一个 Y 轴标签，强制设为 SimHei
+                        for label in ax.get_yticklabels():
+                            label.set_fontproperties(chinese_font)
+                            label.set_fontsize(12) # 保持字号适中
+
+                        # --- 修复 B: X 轴标签 (数值 - 需要负号) ---
+                        # 遍历每一个 X 轴标签，强制设为英文字体
+                        for label in ax.get_xticklabels():
+                            label.set_fontproperties(english_font)
+                            # 同时把可能的特殊减号替换为普通连字符
+                            text = label.get_text()
+                            if '−' in text:  # 检测 Unicode 减号
+                                label.set_text(text.replace('−', '-'))
+
+                        # --- 修复 C: 图内部的数字标注 (需要负号) ---
+                        # SHAP 会在柱子上标数字，这些是 ax.texts
+                        for txt in ax.texts:
+                            txt.set_fontproperties(english_font)
+                            # 暴力替换文本内容中的减号
+                            original_text = txt.get_text()
+                            if '−' in original_text:
+                                txt.set_text(original_text.replace('−', '-'))
+
+                        # --- 修复 D: X 轴标题 ---
+                        ax.set_xlabel(ax.get_xlabel(), fontproperties=chinese_font)
+
+                        # =================================================
+                        
                         plt.tight_layout()
                         st.pyplot(fig)
+                        
                     except Exception as plot_err:
                          st.error(f"绘图失败。调试信息: {plot_err}")
+                         import traceback
+                         st.text(traceback.format_exc())
                 else:
                     st.warning("无法生成 SHAP 图，请检查输入数据或模型结构。")
             
@@ -300,3 +332,4 @@ if st.sidebar.button("🔍 开始预测风险"):
         st.error("系统错误：模型未加载。")
 else:
     st.info("👈 请在左侧侧边栏输入患者的临床参数，然后点击“开始预测风险”按钮。")
+
