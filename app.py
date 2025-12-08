@@ -114,46 +114,46 @@ class DataFrameConverter(BaseEstimator, TransformerMixin):
 # ==========================================
 # 3. 预后评估 Cox / 联合模型参数与函数
 # ==========================================
-# Step 1：图 1 中的 Cox 模型
+# Step 1：Cox 模型
 # 6MWT + WHO 功能分级(1–4) + NT-proBNP -> xbeta
-COEF_6MWT = -0.006
-COEF_FC1 = -0.868
-COEF_FC2 = -3.200
-COEF_FC3 = -1.646
-COEF_BNP = 0.000  # SPSS 表中为 .000，如有更精确系数可在此处替换
 
-# Step 2：图 2 中的联合模型
-# xbeta（COMPERA 原始）+ R/T 比值 -> 总线性预测值
-COEF_XBETA = 0.764           # “COMPERA原始” 的 B
-COEF_RT_RATIO = 0.189        # R 波和 T 波峰值时刻两极磁感应强度差值比值 的 B
-COX_INTERCEPT = 0.0          # 这里用作把线性预测值映射到 0–1 概率的逻辑变换常数
-PROGNOSIS_THRESHOLD = 0.50359  # 联合模型的截断值（概率尺度）
+COEF_6MWT = -0.006
+
+# WHO 功能分级各级别的 B 值
+# 你提供的：FC1: -（参考组/基线），FC2: -0.868，FC3: -3.2，FC4: -1.646
+FC_COEF_MAP = {
+    1: 0.0,       # FC 1 作为参考，B 视为 0
+    2: -0.868,
+    3: -3.200,
+    4: -1.646,
+}
+
+COEF_BNP = 0.000  # NT-proBNP 的 B 为 0.000（如有更精确小数可在此替换）
+
+# Step 2：联合模型
+# xbeta（由上面三个变量构成）+ R/T 比值 -> “总的预测概率” 对应的线性预测值
+
+COEF_XBETA = 0.743          # 上面三项参数整体（xbeta）的系数 B
+COEF_RT_RATIO = 0.244       # R 波和 T 波峰值时刻两极磁感应强度差值比值 的 B
+COX_INTERCEPT = 0.0         # 暂时设为 0，用逻辑函数映射到 0–1 概率
+PROGNOSIS_THRESHOLD = 0.50359  # 联合模型给出的截断值
 
 def compute_xbeta(six_mwt: float, who_fc: int, ntprobnp: float) -> float:
     """
     根据 6MWT、WHO 功能分级 (1-4)、NT-proBNP 计算 Cox 回归线性预测值 xbeta。
-    FC=4 作为基线组，对应 FC1=FC2=FC3=0。
+    这里直接按你整理后的 B 值映射：
+        xbeta = -0.006*6MWT + B_FC(1-4) + 0.000*NT-proBNP
     """
-    fc1 = 1 if who_fc == 1 else 0
-    fc2 = 1 if who_fc == 2 else 0
-    fc3 = 1 if who_fc == 3 else 0
-    xbeta = (
-        COEF_6MWT * six_mwt +
-        COEF_FC1 * fc1 +
-        COEF_FC2 * fc2 +
-        COEF_FC3 * fc3 +
-        COEF_BNP * ntprobnp
-    )
+    b_fc = FC_COEF_MAP.get(int(who_fc), 0.0)
+    xbeta = COEF_6MWT * six_mwt + b_fc + COEF_BNP * ntprobnp
     return xbeta
 
 def compute_prognosis_probability(six_mwt: float, who_fc: int, ntprobnp: float, rt_ratio: float):
     """
-    两步 Cox 联合模型：
+    两步联合模型：
       1）6MWT + WHO-FC + NT-proBNP -> xbeta
-      2）xbeta 与 R/T 比值 -> 线性预测值，再用逻辑函数变为 0–1 概率
-
-    说明：由于目前没有基线生存/常数项，这里用 logistic 函数把线性预测值转成“相对概率”，
-          然后仍采用你给出的 0.50359 作为高危/低危的分界。
+      2）总线性预测值 = 0.743*xbeta + 0.244*(R/T 比值)
+         再用 logistic 函数转成 0–1 概率，用 0.50359 作为高危/低危分界。
     """
     xbeta = compute_xbeta(six_mwt, who_fc, ntprobnp)
     linear_pred = COX_INTERCEPT + COEF_XBETA * xbeta + COEF_RT_RATIO * rt_ratio
