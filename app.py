@@ -203,7 +203,7 @@ if model is not None and feature_names is not None:
 
     # ---- 新增：预后评估所需 4 项参数 ----
     st.sidebar.markdown("---")
-    st.sidebar.subheader("🔮 预后评估参数（仅在高风险时使用）")
+    st.sidebar.subheader("🔮 预后评估参数")
     six_mwt = st.sidebar.number_input("6分钟步行距离", min_value=0.0, value=0.0, step=1.0)
     who_fc = st.sidebar.selectbox("WHO心功能分级(1-4)", options=[1, 2, 3, 4], index=0)
     ntprobnp = st.sidebar.number_input("NT-proBNP", min_value=0.0, value=0.0, step=1.0)
@@ -426,6 +426,7 @@ if st.sidebar.button("🔍 预测"):
         st.error("系统错误：模型未加载。")
 else:
     st.info("👈 请在左侧侧边栏输入患者的临床参数，然后点击“预测”按钮。")
+
 
 
 
