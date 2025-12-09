@@ -337,23 +337,29 @@ if st.sidebar.button("🔍 预测"):
                             rt_ratio or 0.0
                         )
 
+                        # 判定高危 / 低危
                         if combined_xbeta >= PROGNOSIS_THRESHOLD:
                             prog_label = "高危"
                             prog_color = "#dc3545"
                             prog_icon = "⚠️"
+                            prog_box_type = "warning"
                         else:
                             prog_label = "低危"
                             prog_color = "#28a745"
                             prog_icon = "✅"
+                            prog_box_type = "success"
 
+                        # 结果卡片
                         st.markdown(
                             f"""
                             <div class="report-box" style="border-left: 5px solid {prog_color};">
                                 <h3 style="color:{prog_color}; margin:0;">{prog_icon} 临床恶化：{prog_label}</h3>
                                 <p style="color: gray; font-size: 13px; margin-top:8px;">
-                                    预后评估基于心磁特征参数的联合模型。
+                                    预后评估基于两步 Cox 联合模型（6MWT、WHO 心功能分级、
+                                    NT-proBNP 及 R/T 比值），直接使用联合 xbeta 进行分层，
+                                    截断值为 {PROGNOSIS_THRESHOLD:.5f}。
                                 </p>
-                                <!-- 如需与 SPSS 详细对照，可去掉下一行注释，显示具体 xbeta 数值：
+                                <!-- 调试用：如需与 SPSS 对照，可去掉下一行注释显示具体数值
                                 <p style="color:#999; font-size:12px;">
                                     Step1 xbeta = {xbeta_step1:.5f}，联合 xbeta = {combined_xbeta:.5f}
                                 </p>
@@ -363,8 +369,7 @@ if st.sidebar.button("🔍 预测"):
                             unsafe_allow_html=True
                         )
 
-                    
-                    # ===== 新增：预后决策建议 =====
+                        # ===== 新增：预后决策建议 =====
                         st.markdown("#### 📌 预后决策建议")
                         if prog_box_type == "warning":
                             st.warning(
@@ -390,6 +395,7 @@ if st.sidebar.button("🔍 预测"):
                 else:
                     st.markdown("---")
                     st.info("当前为 **低风险**，暂不进行临床恶化预后评估。")
+
             # ========= 右列：SHAP 瀑布图 =========
             with col2:
                 st.markdown("### 🔍 SHAP可解释性分析")
@@ -422,6 +428,7 @@ if st.sidebar.button("🔍 预测"):
         st.error("系统错误：模型未加载。")
 else:
     st.info("👈 请在左侧侧边栏输入患者的临床参数，然后点击“预测”按钮。")
+
 
 
 
