@@ -27,6 +27,7 @@ def configure_font_environment():
     font_filename = "SimHei.ttf"
     font_url = "https://cdn.jsdelivr.net/gh/StellarCN/scp_zh@master/fonts/SimHei.ttf"
 
+    # 如果本地没有字体，尝试下载
     if not os.path.exists(font_filename):
         with st.spinner("正在初始化中文字体环境 (SimHei)..."):
             try:
@@ -39,9 +40,11 @@ def configure_font_environment():
             except Exception as e:
                 st.warning(f"网络异常，字体下载失败: {e}")
 
+    # 注册字体并配置 Matplotlib
     if os.path.exists(font_filename):
         try:
             fm.fontManager.addfont(font_filename)
+
             plt.rcParams["font.family"] = "sans-serif"
             plt.rcParams["font.sans-serif"] = ["SimHei", "DejaVu Sans"]
             plt.rcParams["axes.unicode_minus"] = False
@@ -51,15 +54,18 @@ def configure_font_environment():
                 "font.sans-serif": ["SimHei", "DejaVu Sans"],
                 "axes.unicode_minus": False,
             })
+
             return True
         except Exception as e:
             st.warning(f"字体配置出错，已退回系统默认字体: {e}")
             return False
+
     return False
 
 def fix_shap_minus_signs(ax=None):
     """
-    把 SHAP 图中的 U+2212 负号替换成普通 '-'。
+    将图中所有文本里的 Unicode 减号 U+2212 替换为普通 ASCII '-'，
+    解决部分中文字体（如 SimHei）不包含 U+2212 导致负号显示为方框的问题。
     """
     if ax is None:
         ax = plt.gca()
@@ -67,12 +73,14 @@ def fix_shap_minus_signs(ax=None):
     def _replace_minus(text: str) -> str:
         return text.replace("\u2212", "-") if text else text
 
+    # 坐标轴刻度标签
     for label in list(ax.get_xticklabels()) + list(ax.get_yticklabels()):
         s = label.get_text()
         new_s = _replace_minus(s)
         if new_s != s:
             label.set_text(new_s)
 
+    # 图中的所有文本对象（包括 SHAP 的数值标签）
     for text_obj in ax.texts:
         s = text_obj.get_text()
         new_s = _replace_minus(s)
@@ -115,50 +123,48 @@ class DataFrameConverter(BaseEstimator, TransformerMixin):
 # 3. 预后评估 Cox / 联合模型参数与函数
 # ==========================================
 # Step 1：Cox 模型
-# 6MWT + WHO 功能分级(1–4) + NT-proBNP -> xbeta
+# 6MWT + WHO 功能分级(1–4) + NT-proBNP -> xbeta_step1
 
 COEF_6MWT = -0.006
 
-# WHO 功能分级各级别的 B 值
-# 你提供的：FC1: -（参考组/基线），FC2: -0.868，FC3: -3.2，FC4: -1.646
+# 你提供的 B 值：FC1 为参考组（B 省略），FC2=-0.868、FC3=-3.2、FC4=-1.646
 FC_COEF_MAP = {
-    1: 0.0,       # FC 1 作为参考，B 视为 0
+    1: 0.0,       # FC 1：参考组
     2: -0.868,
     3: -3.200,
     4: -1.646,
 }
 
-COEF_BNP = 0.000  # NT-proBNP 的 B 为 0.000（如有更精确小数可在此替换）
+COEF_BNP = 0.000  # NT-proBNP 的 B 为 0.000 （如有更精确小数可在此替换）
 
-# Step 2：联合模型
-# xbeta（由上面三个变量构成）+ R/T 比值 -> “总的预测概率” 对应的线性预测值
+# Step 2：联合 Cox 模型
+# xbeta_step1 + R/T 比值 -> 联合 xbeta
+COEF_XBETA = 0.743           # 上面三项参数（xbeta_step1）的系数 B
+COEF_RT_RATIO = 0.244        # R/T 比值的系数 B
 
-COEF_XBETA = 0.743          # 上面三项参数整体（xbeta）的系数 B
-COEF_RT_RATIO = 0.244       # R 波和 T 波峰值时刻两极磁感应强度差值比值 的 B
-COX_INTERCEPT = 0.0         # 暂时设为 0，用逻辑函数映射到 0–1 概率
-PROGNOSIS_THRESHOLD = 0.50359  # 联合模型给出的截断值
+# SPSS 给出的联合模型截断值，用于直接比较联合 xbeta
+PROGNOSIS_THRESHOLD = 0.50359  
 
-def compute_xbeta(six_mwt: float, who_fc: int, ntprobnp: float) -> float:
+def compute_xbeta_step1(six_mwt: float, who_fc: int, ntprobnp: float) -> float:
     """
-    根据 6MWT、WHO 功能分级 (1-4)、NT-proBNP 计算 Cox 回归线性预测值 xbeta。
-    这里直接按你整理后的 B 值映射：
-        xbeta = -0.006*6MWT + B_FC(1-4) + 0.000*NT-proBNP
+    Step 1：根据 6MWT、WHO 功能分级 (1-4)、NT-proBNP 计算 Cox 回归线性预测值 xbeta_step1。
+    公式：xbeta_step1 = -0.006*6MWT + B_FC(1-4) + 0.000*NT-proBNP
     """
     b_fc = FC_COEF_MAP.get(int(who_fc), 0.0)
-    xbeta = COEF_6MWT * six_mwt + b_fc + COEF_BNP * ntprobnp
-    return xbeta
+    xbeta_step1 = COEF_6MWT * six_mwt + b_fc + COEF_BNP * ntprobnp
+    return xbeta_step1
 
-def compute_prognosis_probability(six_mwt: float, who_fc: int, ntprobnp: float, rt_ratio: float):
+def compute_combined_xbeta(six_mwt: float, who_fc: int, ntprobnp: float, rt_ratio: float):
     """
-    两步联合模型：
-      1）6MWT + WHO-FC + NT-proBNP -> xbeta
-      2）总线性预测值 = 0.743*xbeta + 0.244*(R/T 比值)
-         再用 logistic 函数转成 0–1 概率，用 0.50359 作为高危/低危分界。
+    Step 2：联合 Cox 模型：
+        xbeta_step1 = -0.006*6MWT + B_FC + 0.000*NT-proBNP
+        xbeta_combined = 0.743*xbeta_step1 + 0.244*(R/T 比值)
+
+    SPSS 的高危/低危分层基于 xbeta_combined 与 0.50359 的比较。
     """
-    xbeta = compute_xbeta(six_mwt, who_fc, ntprobnp)
-    linear_pred = COX_INTERCEPT + COEF_XBETA * xbeta + COEF_RT_RATIO * rt_ratio
-    prob = 1.0 / (1.0 + np.exp(-linear_pred))
-    return prob, xbeta, linear_pred
+    xbeta_step1 = compute_xbeta_step1(six_mwt, who_fc, ntprobnp)
+    xbeta_combined = COEF_XBETA * xbeta_step1 + COEF_RT_RATIO * rt_ratio
+    return xbeta_combined, xbeta_step1
 
 # ==========================================
 # 4. 加载模型与特征（第一步：PH 是否高风险）
@@ -189,6 +195,7 @@ model, feature_names = load_model_and_features()
 # ==========================================
 # 5. 侧边栏：输入界面
 # ==========================================
+# 预后评估 4 项参数先占位
 six_mwt = None
 who_fc = None
 ntprobnp = None
@@ -226,7 +233,7 @@ st.markdown("---")
 if st.sidebar.button("🔍 预测"):
     if model is not None and feature_names is not None:
         with st.spinner('正在计算模型预测风险与 SHAP 解释值，请稍候...'):
-            # A. 随机森林概率（仅用于内部高/低风险判断）
+            # A. 计算随机森林概率（只用于内部风险判断，不展示给用户）
             try:
                 probability = model.predict_proba(input_df)[0, 1]
             except Exception:
@@ -236,6 +243,7 @@ if st.sidebar.button("🔍 预测"):
             # B. 计算 SHAP
             final_explanation = None
             try:
+                # 1. 准备模型输入
                 if hasattr(model, 'steps') or hasattr(model, 'named_steps'):
                     final_estimator = model._final_estimator
                     preprocessor = model[:-1]
@@ -247,6 +255,7 @@ if st.sidebar.button("🔍 预测"):
                     final_estimator = model
                     processed_data_df = input_df
 
+                # 2. 计算 SHAP 值
                 shap_values_obj = None 
                 try:
                     explainer = shap.TreeExplainer(final_estimator)
@@ -259,6 +268,7 @@ if st.sidebar.button("🔍 预测"):
                     )
                     shap_values_obj = explainer(processed_data_df)
 
+                # 3. 提取数据
                 if shap_values_obj is not None:
                     if len(shap_values_obj.values.shape) == 3:
                         shap_contribution = shap_values_obj.values[0, :, 1]
@@ -269,6 +279,7 @@ if st.sidebar.button("🔍 预测"):
 
                     original_input_values = input_df.iloc[0].values
 
+                    # 4. 构建解释对象
                     final_explanation = shap.Explanation(
                         values=shap_contribution,
                         base_values=base_val,
@@ -285,11 +296,12 @@ if st.sidebar.button("🔍 预测"):
             # C. 结果展示
             col1, col2 = st.columns([1, 2])
 
+            # ========= 左列：PH 检测 + 预后评估 =========
             with col1:
                 st.markdown("### 📊 肺动脉高压检测结果")
 
                 risk_percent = probability * 100
-                optimal_threshold = 35.703   # 用于内部高/低风险划分（%）
+                optimal_threshold = 35.703   # 仍用于内部划分（百分比）
                 youden_index = 0.771
 
                 if risk_percent > optimal_threshold:
@@ -312,7 +324,7 @@ if st.sidebar.button("🔍 预测"):
                         "**建议：** 可继续观察，根据临床症状和体征决定是否进一步检查。"
                     )
                 
-                # 只展示高/低风险，不展示具体概率
+                # 卡片中只展示“高/低风险”，不展示具体概率
                 st.markdown(
                     f"""
                     <div class="report-box" style="text-align: center; border-left: 5px solid {color};">
@@ -331,20 +343,21 @@ if st.sidebar.button("🔍 预测"):
                 else:
                     st.success(advice_text)
 
-                # ---- 新增：第二步 —— 预后评估（仅在高风险时执行）----
+                # ---- 第二步：预后评估（仅在 PH 高风险时执行）----
                 if risk_percent > optimal_threshold:
                     st.markdown("---")
                     st.markdown("### 📈 预后评估（临床恶化风险）")
 
                     try:
-                        prog_prob, prog_xbeta, prog_lp = compute_prognosis_probability(
+                        combined_xbeta, xbeta_step1 = compute_combined_xbeta(
                             six_mwt or 0.0,
-                            int(who_fc) if who_fc is not None else 4,
+                            int(who_fc) if who_fc is not None else 1,
                             ntprobnp or 0.0,
                             rt_ratio or 0.0
                         )
 
-                        if prog_prob >= PROGNOSIS_THRESHOLD:
+                        # 直接按照 Cox 联合 xbeta 与 0.50359 的比较判定高危/低危
+                        if combined_xbeta >= PROGNOSIS_THRESHOLD:
                             prog_label = "高危"
                             prog_color = "#dc3545"
                             prog_icon = "⚠️"
@@ -353,15 +366,17 @@ if st.sidebar.button("🔍 预测"):
                             prog_color = "#28a745"
                             prog_icon = "✅"
 
-                        # 按你的要求输出“临床恶化：高危/低危”
                         st.markdown(
                             f"""
                             <div class="report-box" style="border-left: 5px solid {prog_color};">
                                 <h3 style="color:{prog_color}; margin:0;">{prog_icon} 临床恶化：{prog_label}</h3>
                                 <p style="color: gray; font-size: 13px; margin-top:8px;">
                                     预后评估基于两步 Cox 联合模型（6MWT、WHO 心功能分级、NT-proBNP 及 R/T 比值），
-                                    截断值为 {PROGNOSIS_THRESHOLD:.5f}。
+                                    直接使用联合线性预测值 xbeta 进行分层，截断值为 {PROGNOSIS_THRESHOLD:.5f}。
                                 </p>
+                                <!-- 如需与 SPSS 对照调试，可去掉下行注释显示具体 xbeta：
+                                <p style="color:#999; font-size:12px;">xbeta₁ = {xbeta_step1:.3f}，联合 xbeta = {combined_xbeta:.3f}</p>
+                                -->
                             </div>
                             """,
                             unsafe_allow_html=True
@@ -373,6 +388,7 @@ if st.sidebar.button("🔍 预测"):
                     st.markdown("---")
                     st.info("当前为 **低风险**，暂不进行临床恶化预后评估。")
 
+            # ========= 右列：SHAP 瀑布图 =========
             with col2:
                 st.markdown("### 🔍 SHAP 可解释性分析 (瀑布图)")
                 st.markdown("下图展示了各特征对预测结果的贡献：**红色**条表示增加风险，**蓝色**条表示降低风险。")
