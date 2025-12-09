@@ -355,9 +355,7 @@ if st.sidebar.button("🔍 预测"):
                             <div class="report-box" style="border-left: 5px solid {prog_color};">
                                 <h3 style="color:{prog_color}; margin:0;">{prog_icon} 临床恶化：{prog_label}</h3>
                                 <p style="color: gray; font-size: 13px; margin-top:8px;">
-                                    预后评估基于两步 Cox 联合模型（6MWT、WHO 心功能分级、
-                                    NT-proBNP 及 R/T 比值），直接使用联合 xbeta 进行分层，
-                                    截断值为 {PROGNOSIS_THRESHOLD:.5f}。
+                                    预后评估模型为基于心磁特征参数的联合模型。
                                 </p>
                                 <!-- 调试用：如需与 SPSS 对照，可去掉下一行注释显示具体数值
                                 <p style="color:#999; font-size:12px;">
@@ -376,8 +374,8 @@ if st.sidebar.button("🔍 预测"):
                                 "模型提示患者存在 **临床恶化高危**。\n\n"
                                 "建议在肺动脉高压专科医生评估下：\n"
                                 "- 密切随访临床症状、体征和 WHO 心功能分级；\n"
-                                "- 视情况考虑强化或调整治疗方案；\n"
-                                "- 缩短随访间隔，定期监测 6MWT、NT-proBNP 及相关影像/心磁指标。\n\n"
+                                "- 考虑强化或调整治疗方案；\n"
+                                "- 缩短随访间隔，定期监测 6MWT、NT-proBNP 及超声心动图和心磁成像。\n\n"
                                 "以上内容仅供科研与辅助决策参考，不能替代临床医生的个体化判断。"
                             )
                         else:
@@ -428,6 +426,7 @@ if st.sidebar.button("🔍 预测"):
         st.error("系统错误：模型未加载。")
 else:
     st.info("👈 请在左侧侧边栏输入患者的临床参数，然后点击“预测”按钮。")
+
 
 
 
