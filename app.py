@@ -14,20 +14,17 @@ from sklearn.base import BaseEstimator, TransformerMixin
 # 1. 页面配置 & 字体修复
 # ==========================================
 st.set_page_config(
-    page_title="基于心磁成像装置的肺动脉高压检测计算器",
+    page_title="基于心磁成像装置的肺动脉高压风险计算器",
     page_icon="🏥",
     layout="wide"
 )
 
 def configure_font_environment():
-    """
-    下载 SimHei 字体并强制 Matplotlib 使用它。
-    目标：同时正确显示中文和负号。
-    """
+    
     font_filename = "SimHei.ttf"
     font_url = "https://cdn.jsdelivr.net/gh/StellarCN/scp_zh@master/fonts/SimHei.ttf"
 
-    # 如果本地没有字体，尝试下载
+    
     if not os.path.exists(font_filename):
         with st.spinner("正在初始化中文字体环境 (SimHei)..."):
             try:
@@ -63,34 +60,27 @@ def configure_font_environment():
     return False
 
 def fix_shap_minus_signs(ax=None):
-    """
-    将图中所有文本里的 Unicode 减号 U+2212 替换为普通 ASCII '-'，
-    解决部分中文字体（如 SimHei）不包含 U+2212 导致负号显示为方框的问题。
-    """
+
     if ax is None:
         ax = plt.gca()
 
     def _replace_minus(text: str) -> str:
         return text.replace("\u2212", "-") if text else text
 
-    # 坐标轴刻度标签
     for label in list(ax.get_xticklabels()) + list(ax.get_yticklabels()):
         s = label.get_text()
         new_s = _replace_minus(s)
         if new_s != s:
             label.set_text(new_s)
 
-    # 图中的所有文本对象（包括 SHAP 的数值标签）
     for text_obj in ax.texts:
         s = text_obj.get_text()
         new_s = _replace_minus(s)
         if new_s != s:
             text_obj.set_text(new_s)
 
-# 执行字体配置
 is_font_ready = configure_font_environment()
 
-# --- 自定义 CSS ---
 st.markdown("""
     <style>
     .main { background-color: #f9f9f9; }
@@ -137,10 +127,7 @@ COEF_BNP = 0.0004712203
 COX_XBETA_OFFSET = 3.7917941943
 
 def compute_xbeta_step1(six_mwt: float, who_fc: int, ntprobnp: float) -> float:
-    """
-    Step 1：根据 6MWT、WHO 功能分级 (1-4)、NT-proBNP 计算 Cox 回归线性预测值 xbeta_step1，
-    并加上 offset，使其与 SPSS 输出的 xbeta 完全一致。
-    """
+
     b_fc = FC_COEF_MAP.get(int(who_fc), 0.0)
     xbeta_raw = COEF_6MWT * six_mwt + b_fc + COEF_BNP * ntprobnp
     xbeta_spss = xbeta_raw + COX_XBETA_OFFSET
@@ -157,16 +144,7 @@ COX_COMBINED_OFFSET = -0.8246894986
 PROGNOSIS_THRESHOLD = 0.50359  
 
 def compute_combined_xbeta(six_mwt: float, who_fc: int, ntprobnp: float, rt_ratio: float):
-    """
-    Step 2：联合 Cox 模型
-        xbeta_step1 = f(6MWT, WHO-FC, NT-proBNP)  [含 Step1 offset]
-        combined_xbeta = 0.7641513097 * xbeta_step1
-                         + 0.1894249156 * (R/T 比值)
-                         + COX_COMBINED_OFFSET
-    返回：
-        combined_xbeta（最终 xbeta，与 SPSS 一致）,
-        xbeta_step1   （Step1 xbeta，与 SPSS 一致）
-    """
+
     xbeta_step1 = compute_xbeta_step1(six_mwt, who_fc, ntprobnp)
     combined_xbeta = (
         COEF_XBETA * xbeta_step1 +
@@ -210,7 +188,7 @@ ntprobnp = None
 rt_ratio = None
 
 if model is not None and feature_names is not None:
-    st.sidebar.header("📋 受试者参数录入")
+    st.sidebar.header("📋受试者参数录入")
     st.sidebar.markdown("请在下方输入心磁和临床特征参数值：")
     
     input_data = {}
@@ -226,16 +204,16 @@ if model is not None and feature_names is not None:
     # ---- 新增：预后评估所需 4 项参数 ----
     st.sidebar.markdown("---")
     st.sidebar.subheader("🔮 预后评估参数（仅在高风险时使用）")
-    six_mwt = st.sidebar.number_input("6分钟步行距离 6MWT (m)", min_value=0.0, value=0.0, step=1.0)
-    who_fc = st.sidebar.selectbox("WHO 心功能分级 (1-4)", options=[1, 2, 3, 4], index=0)
+    six_mwt = st.sidebar.number_input("6分钟步行距离", min_value=0.0, value=0.0, step=1.0)
+    who_fc = st.sidebar.selectbox("WHO心功能分级(1-4)", options=[1, 2, 3, 4], index=0)
     ntprobnp = st.sidebar.number_input("NT-proBNP", min_value=0.0, value=0.0, step=1.0)
-    rt_ratio = st.sidebar.number_input("R波和T波峰值时刻两极磁感应强度差值比值", value=0.0, format="%.3f")
+    rt_ratio = st.sidebar.number_input("R波和T波峰值时刻两极磁感应强度差值比值", value=0.0, format="%.2f")
 
 # ==========================================
 # 6. 主界面：PH 检测 + SHAP + 预后评估
 # ==========================================
-st.title("🏥 基于心磁成像装置的肺动脉高压检测计算器")
-st.markdown("基于随机森林算法构建")
+st.title("🏥 基于心磁成像装置的肺动脉高压风险计算器")
+st.markdown("基于随机森林和Cox回归算法构建")
 st.markdown("---")
 
 if st.sidebar.button("🔍 预测"):
@@ -310,7 +288,7 @@ if st.sidebar.button("🔍 预测"):
 
                 if risk_percent > optimal_threshold:
                     color = "#dc3545"
-                    risk_label = "高风险 (High Risk)"
+                    risk_label = "高风险"
                     icon = "⚠️"
                     advice_box = "warning"
                     advice_text = (
@@ -320,12 +298,12 @@ if st.sidebar.button("🔍 预测"):
                     )
                 else:
                     color = "#28a745"
-                    risk_label = "低风险 (Low Risk)"
+                    risk_label = "低风险"
                     icon = "✅"
                     advice_box = "success"
                     advice_text = (
                         "模型评估结果为 **低风险**，提示患者当前患肺动脉高压的可能性较低。\n\n"
-                        "**建议：** 可继续观察，根据临床症状和体征决定是否进一步检查。"
+                        "**建议：** 可继续观察、密切随访，根据临床症状和体征决定是否进一步检查。"
                     )
                 
                 st.markdown(
@@ -373,9 +351,7 @@ if st.sidebar.button("🔍 预测"):
                             <div class="report-box" style="border-left: 5px solid {prog_color};">
                                 <h3 style="color:{prog_color}; margin:0;">{prog_icon} 临床恶化：{prog_label}</h3>
                                 <p style="color: gray; font-size: 13px; margin-top:8px;">
-                                    预后评估基于两步 Cox 联合模型（6MWT、WHO 心功能分级、
-                                    NT-proBNP 及 R/T 比值），直接使用联合 xbeta 进行分层，
-                                    截断值为 {PROGNOSIS_THRESHOLD:.5f}。
+                                    预后评估基于心磁特征参数的联合模型。
                                 </p>
                                 <!-- 如需与 SPSS 详细对照，可去掉下一行注释，显示具体 xbeta 数值：
                                 <p style="color:#999; font-size:12px;">
@@ -394,7 +370,7 @@ if st.sidebar.button("🔍 预测"):
 
             # ========= 右列：SHAP 瀑布图 =========
             with col2:
-                st.markdown("### 🔍 SHAP 可解释性分析 (瀑布图)")
+                st.markdown("### 🔍 SHAP可解释性分析")
                 st.markdown("下图展示了各特征对预测结果的贡献：**红色**条表示增加风险，**蓝色**条表示降低风险。")
                 
                 if final_explanation is not None:
@@ -424,4 +400,5 @@ if st.sidebar.button("🔍 预测"):
         st.error("系统错误：模型未加载。")
 else:
     st.info("👈 请在左侧侧边栏输入患者的临床参数，然后点击“预测”按钮。")
+
 
