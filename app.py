@@ -407,7 +407,7 @@ if st.sidebar.button("🔍 预测"):
                         plt.rcParams["font.sans-serif"] = ["SimHei", "DejaVu Sans"]
                         plt.rcParams["axes.unicode_minus"] = False
 
-                        shap.plots.waterfall(final_explanation, show=False, max_display=14)
+                        shap.plots.waterfall(final_explanation, show=False, max_display=10)
                         fix_shap_minus_signs(ax)
 
                         plt.tight_layout()
@@ -426,6 +426,7 @@ if st.sidebar.button("🔍 预测"):
         st.error("系统错误：模型未加载。")
 else:
     st.info("👈 请在左侧侧边栏输入患者的临床参数，然后点击“预测”按钮。")
+
 
 
 
