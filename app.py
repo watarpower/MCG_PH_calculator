@@ -11,7 +11,7 @@ import requests
 from sklearn.base import BaseEstimator, TransformerMixin
 
 # ==========================================
-# 1. 核心配置与字体修复
+# 1. 页面配置 & 字体修复
 # ==========================================
 st.set_page_config(
     page_title="基于心磁成像装置的肺动脉高压检测计算器",
@@ -109,7 +109,7 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. 定义必要的类 (防止模型加载报错)
+# 2. 防止 joblib 加载报错的类
 # ==========================================
 class DataFrameConverter(BaseEstimator, TransformerMixin):
     def __init__(self):
@@ -120,54 +120,63 @@ class DataFrameConverter(BaseEstimator, TransformerMixin):
         return pd.DataFrame(X)
 
 # ==========================================
-# 3. 预后评估 Cox / 联合模型参数与函数
+# 3. 预后评估：两步 Cox + 常数（与 SPSS 完全一致）
 # ==========================================
-# Step 1：Cox 模型
-# 6MWT + WHO 功能分级(1–4) + NT-proBNP -> xbeta_step1
-
-COEF_6MWT = -0.006
-
-# 你提供的 B 值：FC1 为参考组（B 省略），FC2=-0.868、FC3=-3.2、FC4=-1.646
+# ---- Step 1：6MWT + WHO-FC + NT-proBNP -> xbeta_step1（SPSS 标尺） ----
+# 精确 B 值（来自你提供的表）
+COEF_6MWT = -0.0060487159
 FC_COEF_MAP = {
-    1: 0.0,       # FC 1：参考组
-    2: -0.868,
-    3: -3.200,
-    4: -1.646,
+    1: -0.8677105258,   # FC(1)
+    2: -3.20036354,     # FC(2)
+    3: -1.64640119,     # FC(3)
+    4: 0.0,             # FC(4) 参考组
 }
+COEF_BNP = 0.0004712203
 
-COEF_BNP = 0.000  # NT-proBNP 的 B 为 0.000 （如有更精确小数可在此替换）
-
-# Step 2：联合 Cox 模型
-# xbeta_step1 + R/T 比值 -> 联合 xbeta
-COEF_XBETA = 0.743           # 上面三项参数（xbeta_step1）的系数 B
-COEF_RT_RATIO = 0.244        # R/T 比值的系数 B
-
-# SPSS 给出的联合模型截断值，用于直接比较联合 xbeta
-PROGNOSIS_THRESHOLD = 0.50359  
+# 使 xbeta_step1 与 SPSS 完全一致的常数（根据 FC=1, 6MWT=570, BNP=315 反推）
+COX_XBETA_OFFSET = 3.7917941943
 
 def compute_xbeta_step1(six_mwt: float, who_fc: int, ntprobnp: float) -> float:
     """
-    Step 1：根据 6MWT、WHO 功能分级 (1-4)、NT-proBNP 计算 Cox 回归线性预测值 xbeta_step1。
-    公式：xbeta_step1 = -0.006*6MWT + B_FC(1-4) + 0.000*NT-proBNP
+    Step 1：根据 6MWT、WHO 功能分级 (1-4)、NT-proBNP 计算 Cox 回归线性预测值 xbeta_step1，
+    并加上 offset，使其与 SPSS 输出的 xbeta 完全一致。
     """
     b_fc = FC_COEF_MAP.get(int(who_fc), 0.0)
-    xbeta_step1 = COEF_6MWT * six_mwt + b_fc + COEF_BNP * ntprobnp
-    return xbeta_step1
+    xbeta_raw = COEF_6MWT * six_mwt + b_fc + COEF_BNP * ntprobnp
+    xbeta_spss = xbeta_raw + COX_XBETA_OFFSET
+    return xbeta_spss
+
+# ---- Step 2：联合 Cox：xbeta_step1 + R/T 比值 -> 最终 xbeta ----
+COEF_XBETA = 0.7641513097
+COEF_RT_RATIO = 0.1894249156
+
+# 使最终 combined xbeta 与 SPSS 一致的常数
+COX_COMBINED_OFFSET = -0.8246894986
+
+# 联合模型截断值（在 SPSS 同一标尺上）
+PROGNOSIS_THRESHOLD = 0.50359  
 
 def compute_combined_xbeta(six_mwt: float, who_fc: int, ntprobnp: float, rt_ratio: float):
     """
-    Step 2：联合 Cox 模型：
-        xbeta_step1 = -0.006*6MWT + B_FC + 0.000*NT-proBNP
-        xbeta_combined = 0.743*xbeta_step1 + 0.244*(R/T 比值)
-
-    SPSS 的高危/低危分层基于 xbeta_combined 与 0.50359 的比较。
+    Step 2：联合 Cox 模型
+        xbeta_step1 = f(6MWT, WHO-FC, NT-proBNP)  [含 Step1 offset]
+        combined_xbeta = 0.7641513097 * xbeta_step1
+                         + 0.1894249156 * (R/T 比值)
+                         + COX_COMBINED_OFFSET
+    返回：
+        combined_xbeta（最终 xbeta，与 SPSS 一致）,
+        xbeta_step1   （Step1 xbeta，与 SPSS 一致）
     """
     xbeta_step1 = compute_xbeta_step1(six_mwt, who_fc, ntprobnp)
-    xbeta_combined = COEF_XBETA * xbeta_step1 + COEF_RT_RATIO * rt_ratio
-    return xbeta_combined, xbeta_step1
+    combined_xbeta = (
+        COEF_XBETA * xbeta_step1 +
+        COEF_RT_RATIO * rt_ratio +
+        COX_COMBINED_OFFSET
+    )
+    return combined_xbeta, xbeta_step1
 
 # ==========================================
-# 4. 加载模型与特征（第一步：PH 是否高风险）
+# 4. 加载随机森林模型与特征（PH 检测）
 # ==========================================
 @st.cache_resource
 def load_model_and_features():
@@ -195,7 +204,6 @@ model, feature_names = load_model_and_features()
 # ==========================================
 # 5. 侧边栏：输入界面
 # ==========================================
-# 预后评估 4 项参数先占位
 six_mwt = None
 who_fc = None
 ntprobnp = None
@@ -224,7 +232,7 @@ if model is not None and feature_names is not None:
     rt_ratio = st.sidebar.number_input("R波和T波峰值时刻两极磁感应强度差值比值", value=0.0, format="%.3f")
 
 # ==========================================
-# 6. 主界面：预测与解释逻辑
+# 6. 主界面：PH 检测 + SHAP + 预后评估
 # ==========================================
 st.title("🏥 基于心磁成像装置的肺动脉高压检测计算器")
 st.markdown("基于随机森林算法构建")
@@ -233,7 +241,7 @@ st.markdown("---")
 if st.sidebar.button("🔍 预测"):
     if model is not None and feature_names is not None:
         with st.spinner('正在计算模型预测风险与 SHAP 解释值，请稍候...'):
-            # A. 计算随机森林概率（只用于内部风险判断，不展示给用户）
+            # A. 随机森林预测（PH 是否高风险）
             try:
                 probability = model.predict_proba(input_df)[0, 1]
             except Exception:
@@ -243,7 +251,6 @@ if st.sidebar.button("🔍 预测"):
             # B. 计算 SHAP
             final_explanation = None
             try:
-                # 1. 准备模型输入
                 if hasattr(model, 'steps') or hasattr(model, 'named_steps'):
                     final_estimator = model._final_estimator
                     preprocessor = model[:-1]
@@ -255,7 +262,6 @@ if st.sidebar.button("🔍 预测"):
                     final_estimator = model
                     processed_data_df = input_df
 
-                # 2. 计算 SHAP 值
                 shap_values_obj = None 
                 try:
                     explainer = shap.TreeExplainer(final_estimator)
@@ -268,7 +274,6 @@ if st.sidebar.button("🔍 预测"):
                     )
                     shap_values_obj = explainer(processed_data_df)
 
-                # 3. 提取数据
                 if shap_values_obj is not None:
                     if len(shap_values_obj.values.shape) == 3:
                         shap_contribution = shap_values_obj.values[0, :, 1]
@@ -279,7 +284,6 @@ if st.sidebar.button("🔍 预测"):
 
                     original_input_values = input_df.iloc[0].values
 
-                    # 4. 构建解释对象
                     final_explanation = shap.Explanation(
                         values=shap_contribution,
                         base_values=base_val,
@@ -296,7 +300,7 @@ if st.sidebar.button("🔍 预测"):
             # C. 结果展示
             col1, col2 = st.columns([1, 2])
 
-            # ========= 左列：PH 检测 + 预后评估 =========
+            # ========= 左列：PH 检测 + 预后 =========
             with col1:
                 st.markdown("### 📊 肺动脉高压检测结果")
 
@@ -324,7 +328,6 @@ if st.sidebar.button("🔍 预测"):
                         "**建议：** 可继续观察，根据临床症状和体征决定是否进一步检查。"
                     )
                 
-                # 卡片中只展示“高/低风险”，不展示具体概率
                 st.markdown(
                     f"""
                     <div class="report-box" style="text-align: center; border-left: 5px solid {color};">
@@ -343,7 +346,7 @@ if st.sidebar.button("🔍 预测"):
                 else:
                     st.success(advice_text)
 
-                # ---- 第二步：预后评估（仅在 PH 高风险时执行）----
+                # ---- 第二步：仅在 PH 高风险时进行预后评估 ----
                 if risk_percent > optimal_threshold:
                     st.markdown("---")
                     st.markdown("### 📈 预后评估（临床恶化风险）")
@@ -356,7 +359,6 @@ if st.sidebar.button("🔍 预测"):
                             rt_ratio or 0.0
                         )
 
-                        # 直接按照 Cox 联合 xbeta 与 0.50359 的比较判定高危/低危
                         if combined_xbeta >= PROGNOSIS_THRESHOLD:
                             prog_label = "高危"
                             prog_color = "#dc3545"
@@ -371,11 +373,14 @@ if st.sidebar.button("🔍 预测"):
                             <div class="report-box" style="border-left: 5px solid {prog_color};">
                                 <h3 style="color:{prog_color}; margin:0;">{prog_icon} 临床恶化：{prog_label}</h3>
                                 <p style="color: gray; font-size: 13px; margin-top:8px;">
-                                    预后评估基于两步 Cox 联合模型（6MWT、WHO 心功能分级、NT-proBNP 及 R/T 比值），
-                                    直接使用联合线性预测值 xbeta 进行分层，截断值为 {PROGNOSIS_THRESHOLD:.5f}。
+                                    预后评估基于两步 Cox 联合模型（6MWT、WHO 心功能分级、
+                                    NT-proBNP 及 R/T 比值），直接使用联合 xbeta 进行分层，
+                                    截断值为 {PROGNOSIS_THRESHOLD:.5f}。
                                 </p>
-                                <!-- 如需与 SPSS 对照调试，可去掉下行注释显示具体 xbeta：
-                                <p style="color:#999; font-size:12px;">xbeta₁ = {xbeta_step1:.3f}，联合 xbeta = {combined_xbeta:.3f}</p>
+                                <!-- 如需与 SPSS 详细对照，可去掉下一行注释，显示具体 xbeta 数值：
+                                <p style="color:#999; font-size:12px;">
+                                    Step1 xbeta = {xbeta_step1:.5f}，联合 xbeta = {combined_xbeta:.5f}
+                                </p>
                                 -->
                             </div>
                             """,
@@ -384,7 +389,6 @@ if st.sidebar.button("🔍 预测"):
                     except Exception as e:
                         st.error(f"预后评估计算失败，请检查输入参数：{e}")
                 else:
-                    # 低风险患者不做预后评估
                     st.markdown("---")
                     st.info("当前为 **低风险**，暂不进行临床恶化预后评估。")
 
