@@ -401,7 +401,7 @@ if st.sidebar.button("🔍 预测"):
                 
                 if final_explanation is not None:
                     try:
-                        fig, ax = plt.subplots(figsize=(10, 6))
+                        fig, ax = plt.subplots(figsize=(8, 6))
 
                         plt.rcParams["font.family"] = "sans-serif"
                         plt.rcParams["font.sans-serif"] = ["SimHei", "DejaVu Sans"]
@@ -426,6 +426,7 @@ if st.sidebar.button("🔍 预测"):
         st.error("系统错误：模型未加载。")
 else:
     st.info("👈 请在左侧侧边栏输入患者的临床参数，然后点击“预测”按钮。")
+
 
 
 
