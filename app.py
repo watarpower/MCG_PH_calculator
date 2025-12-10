@@ -90,7 +90,7 @@ st.markdown("""
         border: 1px solid #e6e6e6; padding: 20px; background-color: white; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);
     }
     .threshold-info {
-        font-size: 12px; color: #666; text-align: center; margin-top: 5px;
+        font-size: 20px; color: #666; text-align: center; margin-top: 5px;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -436,5 +436,6 @@ if predict_clicked and (model is not None) and (input_df is not None):
         )
 else:
     st.info("👉 请在上方输入患者的参数后，点击“预测”按钮。")
+
 
 
