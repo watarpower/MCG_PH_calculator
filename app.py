@@ -299,7 +299,7 @@ if predict_clicked and (model is not None) and (input_df is not None):
 
         # ========= 左列：PH 检测 + 预后 =========
         with col1:
-            st.markdown("### 📊 肺动脉高压检测结果")
+            st.markdown("### 📊 预测结果")
 
             risk_percent = probability * 100
             optimal_threshold = 35.703   # 内部高/低风险划分阈值（百分比）
@@ -307,7 +307,7 @@ if predict_clicked and (model is not None) and (input_df is not None):
 
             if risk_percent > optimal_threshold:
                 color = "#dc3545"
-                risk_label = "高风险"
+                risk_label = "肺动脉高压高风险"
                 icon = "⚠️"
                 advice_box = "warning"
                 advice_text = (
@@ -317,7 +317,7 @@ if predict_clicked and (model is not None) and (input_df is not None):
                 )
             else:
                 color = "#28a745"
-                risk_label = "低风险"
+                risk_label = "肺动脉高压低风险"
                 icon = "✅"
                 advice_box = "success"
                 advice_text = (
@@ -346,7 +346,7 @@ if predict_clicked and (model is not None) and (input_df is not None):
             # ---- 第二步：仅在 PH 高风险时进行预后评估 ----
             if risk_percent > optimal_threshold:
                 st.markdown("---")
-                st.markdown("### 📈 预后评估（临床恶化风险）")
+                st.markdown("### 📈 预后评估")
 
                 try:
                     combined_xbeta, xbeta_step1 = compute_combined_xbeta(
@@ -373,7 +373,7 @@ if predict_clicked and (model is not None) and (input_df is not None):
                         <div class="report-box" style="border-left: 5px solid {prog_color};">
                             <h3 style="color:{prog_color}; margin:0;">{prog_icon} 临床恶化：{prog_label}</h3>
                             <p style="color: gray; font-size: 13px; margin-top:8px;">
-                                预后评估模型为基于心磁特征参数的联合模型。
+                                
                             </p>
                         </div>
                         """,
@@ -436,3 +436,4 @@ if predict_clicked and (model is not None) and (input_df is not None):
         )
 else:
     st.info("👉 请在上方输入患者的参数后，点击“预测”按钮。")
+
