@@ -374,7 +374,7 @@ if predict_clicked and (model is not None) and (input_df is not None):
                             <h3 style="color:{prog_color}; margin:0;">{prog_icon} 临床恶化：{prog_label}</h3>
                             <p style="color: gray; font-size: 13px; margin-top:8px;">
                                 
-                            </p>
+                            
                         </div>
                         """,
                         unsafe_allow_html=True
@@ -436,4 +436,5 @@ if predict_clicked and (model is not None) and (input_df is not None):
         )
 else:
     st.info("👉 请在上方输入患者的参数后，点击“预测”按钮。")
+
 
