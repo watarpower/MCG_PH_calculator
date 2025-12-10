@@ -20,11 +20,9 @@ st.set_page_config(
 )
 
 def configure_font_environment():
-    
     font_filename = "SimHei.ttf"
     font_url = "https://cdn.jsdelivr.net/gh/StellarCN/scp_zh@master/fonts/SimHei.ttf"
 
-    
     if not os.path.exists(font_filename):
         with st.spinner("正在初始化中文字体环境 (SimHei)..."):
             try:
@@ -37,7 +35,6 @@ def configure_font_environment():
             except Exception as e:
                 st.warning(f"网络异常，字体下载失败: {e}")
 
-    # 注册字体并配置 Matplotlib
     if os.path.exists(font_filename):
         try:
             fm.fontManager.addfont(font_filename)
@@ -60,7 +57,6 @@ def configure_font_environment():
     return False
 
 def fix_shap_minus_signs(ax=None):
-
     if ax is None:
         ax = plt.gca()
 
@@ -112,39 +108,31 @@ class DataFrameConverter(BaseEstimator, TransformerMixin):
 # ==========================================
 # 3. 预后评估：两步 Cox + 常数（与 SPSS 完全一致）
 # ==========================================
-# ---- Step 1：6MWT + WHO-FC + NT-proBNP -> xbeta_step1（SPSS 标尺） ----
-# 精确 B 值（来自你提供的表）
+# Step 1：6MWT + WHO-FC + NT-proBNP -> xbeta_step1（SPSS 标尺）
 COEF_6MWT = -0.0060487159
 FC_COEF_MAP = {
-    1:  0.0,   # FC(1)参考组
-    2: -0.8677105258,     # FC(2)
-    3: -3.20036354,     # FC(3)
-    4: -1.64640119,            # FC(4) 
+    1: 0.0,              # FC(1) 参考组
+    2: -0.8677105258,    # FC(2)
+    3: -3.20036354,      # FC(3)
+    4: -1.64640119,      # FC(4)
 }
 COEF_BNP = 0.0004712203
 
-# 使 xbeta_step1 与 SPSS 完全一致的常数（根据 FC=1, 6MWT=570, BNP=315 反推）
-COX_XBETA_OFFSET = 3.7917941943
+COX_XBETA_OFFSET = 3.7917941943  # 使 xbeta_step1 与 SPSS 完全一致的常数
 
 def compute_xbeta_step1(six_mwt: float, who_fc: int, ntprobnp: float) -> float:
-
     b_fc = FC_COEF_MAP.get(int(who_fc), 0.0)
     xbeta_raw = COEF_6MWT * six_mwt + b_fc + COEF_BNP * ntprobnp
     xbeta_spss = xbeta_raw + COX_XBETA_OFFSET
     return xbeta_spss
 
-# ---- Step 2：联合 Cox：xbeta_step1 + R/T 比值 -> 最终 xbeta ----
+# Step 2：联合 Cox：xbeta_step1 + R/T 比值 -> 最终 xbeta
 COEF_XBETA = 0.7641513097
 COEF_RT_RATIO = 0.1894249156
-
-# 使最终 combined xbeta 与 SPSS 一致的常数
 COX_COMBINED_OFFSET = -0.8246894986
-
-# 联合模型截断值（在 SPSS 同一标尺上）
-PROGNOSIS_THRESHOLD = 0.50359  
+PROGNOSIS_THRESHOLD = 0.50359  # 联合模型截断值
 
 def compute_combined_xbeta(six_mwt: float, who_fc: int, ntprobnp: float, rt_ratio: float):
-
     xbeta_step1 = compute_xbeta_step1(six_mwt, who_fc, ntprobnp)
     combined_xbeta = (
         COEF_XBETA * xbeta_step1 +
@@ -180,258 +168,246 @@ def load_model_and_features():
 model, feature_names = load_model_and_features()
 
 # ==========================================
-# 5. 侧边栏：输入界面
+# 5. 标题 & 参数输入（在主区域）
 # ==========================================
+st.title("🏥 基于心磁成像装置的肺动脉高压风险计算器")
+st.markdown("---")
+
 six_mwt = None
 who_fc = None
 ntprobnp = None
 rt_ratio = None
+input_df = None
 
 if model is not None and feature_names is not None:
-    st.sidebar.header("📋受试者参数录入")
-    st.sidebar.markdown("请在下方输入心磁和临床特征参数值：")
-    
-    input_data = {}
-    for feature in feature_names:
-        feature_lower = feature.lower()
-        if 'sex' in feature_lower or 'gender' in feature_lower or 'code' in feature_lower:
-            input_data[feature] = st.sidebar.selectbox(f"{feature} (分类变量)", options=[0, 1], index=0)
-        else:
-            input_data[feature] = st.sidebar.number_input(f"{feature} (数值)", value=0.0, format="%.2f")
+    st.subheader("📋 受试者参数录入")
+    st.markdown("请在下方输入心磁和临床特征参数值，然后点击右侧或下方的“预测”按钮。")
 
-    input_df = pd.DataFrame([input_data], columns=feature_names)
+    # 左边：模型特征输入；右边：预后评估 4 项参数
+    input_col, prog_col = st.columns([2, 1])
 
-    # ---- 新增：预后评估所需 4 项参数 ----
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("🔮 预后评估参数")
-    six_mwt = st.sidebar.number_input("6分钟步行距离", min_value=0.0, value=0.0, step=1.0)
-    who_fc = st.sidebar.selectbox("WHO心功能分级(1-4)", options=[1, 2, 3, 4], index=0)
-    ntprobnp = st.sidebar.number_input("NT-proBNP", min_value=0.0, value=0.0, step=1.0)
-    rt_ratio = st.sidebar.number_input("R波和T波峰值时刻两极磁感应强度差值比值", value=0.0, format="%.2f")
+    with input_col:
+        input_data = {}
+        for feature in feature_names:
+            feature_lower = feature.lower()
+            if 'sex' in feature_lower or 'gender' in feature_lower or 'code' in feature_lower:
+                input_data[feature] = st.selectbox(f"{feature} (分类变量)", options=[0, 1], index=0)
+            else:
+                input_data[feature] = st.number_input(f"{feature} (数值)", value=0.0, format="%.2f")
+        input_df = pd.DataFrame([input_data], columns=feature_names)
+
+    with prog_col:
+        st.markdown("#### 🔮 预后评估参数")
+        six_mwt = st.number_input("6分钟步行距离 (6MWT，m)", min_value=0.0, value=0.0, step=1.0)
+        who_fc = st.selectbox("WHO 心功能分级 (1-4)", options=[1, 2, 3, 4], index=0)
+        ntprobnp = st.number_input("NT-proBNP", min_value=0.0, value=0.0, step=1.0)
+        rt_ratio = st.number_input("R波和T波峰值时刻两极磁感应强度差值比值", value=0.0, format="%.2f")
+
+    # 预测按钮放在整行下方，更居中
+    predict_clicked = st.button("🔍 预测")
+else:
+    predict_clicked = False
 
 # ==========================================
 # 6. 主界面：PH 检测 + SHAP + 预后评估
 # ==========================================
-st.title("🏥 基于心磁成像装置的肺动脉高压风险计算器")
-# st.markdown("基于随机森林和Cox回归算法构建")
-st.markdown("---")
+if predict_clicked and (model is not None) and (input_df is not None):
+    with st.spinner('正在计算模型预测风险与 SHAP 解释值，请稍候...'):
+        # A. 随机森林预测（PH 是否高风险）
+        try:
+            probability = model.predict_proba(input_df)[0, 1]
+        except Exception:
+            prediction = model.predict(input_df)[0]
+            probability = 1.0 if prediction == 1 else 0.0
 
-if st.sidebar.button("🔍 预测"):
-    if model is not None and feature_names is not None:
-        with st.spinner('正在计算模型预测风险与 SHAP 解释值，请稍候...'):
-            # A. 随机森林预测（PH 是否高风险）
+        # B. 计算 SHAP
+        final_explanation = None
+        try:
+            if hasattr(model, 'steps') or hasattr(model, 'named_steps'):
+                final_estimator = model._final_estimator
+                preprocessor = model[:-1]
+                processed_data = preprocessor.transform(input_df)
+                if hasattr(processed_data, "toarray"):
+                    processed_data = processed_data.toarray()
+                processed_data_df = pd.DataFrame(processed_data)
+            else:
+                final_estimator = model
+                processed_data_df = input_df
+
+            shap_values_obj = None 
             try:
-                probability = model.predict_proba(input_df)[0, 1]
+                explainer = shap.TreeExplainer(final_estimator)
+                shap_values_obj = explainer(processed_data_df)
             except Exception:
-                prediction = model.predict(input_df)[0]
-                probability = 1.0 if prediction == 1 else 0.0
-
-            # B. 计算 SHAP
-            final_explanation = None
-            try:
-                if hasattr(model, 'steps') or hasattr(model, 'named_steps'):
-                    final_estimator = model._final_estimator
-                    preprocessor = model[:-1]
-                    processed_data = preprocessor.transform(input_df)
-                    if hasattr(processed_data, "toarray"):
-                        processed_data = processed_data.toarray()
-                    processed_data_df = pd.DataFrame(processed_data)
-                else:
-                    final_estimator = model
-                    processed_data_df = input_df
-
-                shap_values_obj = None 
-                try:
-                    explainer = shap.TreeExplainer(final_estimator)
-                    shap_values_obj = explainer(processed_data_df)
-                except Exception:
-                    explainer = shap.TreeExplainer(
-                        final_estimator, 
-                        data=processed_data_df, 
-                        model_output="probability"
-                    )
-                    shap_values_obj = explainer(processed_data_df)
-
-                if shap_values_obj is not None:
-                    if len(shap_values_obj.values.shape) == 3:
-                        shap_contribution = shap_values_obj.values[0, :, 1]
-                        base_val = shap_values_obj.base_values[0, 1]
-                    else:
-                        shap_contribution = shap_values_obj.values[0]
-                        base_val = shap_values_obj.base_values[0]
-
-                    original_input_values = input_df.iloc[0].values
-
-                    final_explanation = shap.Explanation(
-                        values=shap_contribution,
-                        base_values=base_val,
-                        data=original_input_values,
-                        feature_names=feature_names
-                    )
-                else:
-                    st.error("SHAP 计算未返回有效结果")
-
-            except Exception as e:
-                st.error(f"SHAP 计算模块出错: {str(e)}")
-                final_explanation = None
-
-            # C. 结果展示
-            col1, col2 = st.columns([1, 2])
-
-            # ========= 左列：PH 检测 + 预后 =========
-            with col1:
-                st.markdown("### 📊 肺动脉高压检测结果")
-
-                risk_percent = probability * 100
-                optimal_threshold = 35.703   # 仍用于内部划分（百分比）
-                youden_index = 0.771
-
-                if risk_percent > optimal_threshold:
-                    color = "#dc3545"
-                    risk_label = "高风险"
-                    icon = "⚠️"
-                    advice_box = "warning"
-                    advice_text = (
-                        "模型评估结果为 **高风险**，提示患者当前患肺动脉高压的可能性较高。\n\n"
-                        "**建议：** 建议进一步完善右心导管检查，"
-                        "并结合临床情况进行综合评估。"
-                    )
-                else:
-                    color = "#28a745"
-                    risk_label = "低风险"
-                    icon = "✅"
-                    advice_box = "success"
-                    advice_text = (
-                        "模型评估结果为 **低风险**，提示患者当前患肺动脉高压的可能性较低。\n\n"
-                        "**建议：** 可继续观察、密切随访，根据临床症状和体征决定是否进一步检查。"
-                    )
-                
-                st.markdown(
-                    f"""
-                    <div class="report-box" style="text-align: center; border-left: 5px solid {color};">
-                        <h2 style="color: {color}; font-size: 40px; margin: 0;">{icon} {risk_label}</h2>
-                        <p style="color: gray; font-size: 14px; margin-top: 10px;">
-                            本结果仅供科研与辅助决策参考。
-                        </p>
-                    </div>
-                    """, 
-                    unsafe_allow_html=True
+                explainer = shap.TreeExplainer(
+                    final_estimator, 
+                    data=processed_data_df, 
+                    model_output="probability"
                 )
-                
-                st.markdown("### 🩺 决策建议")
-                if advice_box == "warning":
-                    st.warning(advice_text)
+                shap_values_obj = explainer(processed_data_df)
+
+            if shap_values_obj is not None:
+                if len(shap_values_obj.values.shape) == 3:
+                    shap_contribution = shap_values_obj.values[0, :, 1]
+                    base_val = shap_values_obj.base_values[0, 1]
                 else:
-                    st.success(advice_text)
+                    shap_contribution = shap_values_obj.values[0]
+                    base_val = shap_values_obj.base_values[0]
 
-                # ---- 第二步：仅在 PH 高风险时进行预后评估 ----
-                if risk_percent > optimal_threshold:
-                    st.markdown("---")
-                    st.markdown("### 📈 预后评估（临床恶化风险）")
+                original_input_values = input_df.iloc[0].values
 
-                    try:
-                        combined_xbeta, xbeta_step1 = compute_combined_xbeta(
-                            six_mwt or 0.0,
-                            int(who_fc) if who_fc is not None else 1,
-                            ntprobnp or 0.0,
-                            rt_ratio or 0.0
-                        )
+                final_explanation = shap.Explanation(
+                    values=shap_contribution,
+                    base_values=base_val,
+                    data=original_input_values,
+                    feature_names=feature_names
+                )
+            else:
+                st.error("SHAP 计算未返回有效结果")
 
-                        # 判定高危 / 低危
-                        if combined_xbeta >= PROGNOSIS_THRESHOLD:
-                            prog_label = "高危"
-                            prog_color = "#dc3545"
-                            prog_icon = "⚠️"
-                            prog_box_type = "warning"
-                        else:
-                            prog_label = "低危"
-                            prog_color = "#28a745"
-                            prog_icon = "✅"
-                            prog_box_type = "success"
+        except Exception as e:
+            st.error(f"SHAP 计算模块出错: {str(e)}")
+            final_explanation = None
 
-                        # 结果卡片
-                        st.markdown(
-                            f"""
-                            <div class="report-box" style="border-left: 5px solid {prog_color};">
-                                <h3 style="color:{prog_color}; margin:0;">{prog_icon} 临床恶化：{prog_label}</h3>
-                                <p style="color: gray; font-size: 13px; margin-top:8px;">
-                                    预后评估模型为基于心磁特征参数的联合模型。
-                                </p>
-                                <!-- 调试用：如需与 SPSS 对照，可去掉下一行注释显示具体数值
-                                <p style="color:#999; font-size:12px;">
-                                    Step1 xbeta = {xbeta_step1:.5f}，联合 xbeta = {combined_xbeta:.5f}
-                                </p>
-                                -->
-                            </div>
-                            """,
-                            unsafe_allow_html=True
-                        )
+        # C. 结果展示
+        col1, col2 = st.columns([1, 2])
 
-                        # ===== 新增：预后决策建议 =====
-                        st.markdown("#### 📌 预后决策建议")
-                        if prog_box_type == "warning":
-                            st.warning(
-                                "模型提示患者存在 **临床恶化高危**。\n\n"
-                                "建议在肺动脉高压专科医生评估下：\n"
-                                "- 密切随访临床症状、体征和 WHO 心功能分级；\n"
-                                "- 考虑强化或调整治疗方案；\n"
-                                "- 缩短随访间隔，定期监测 6MWT、NT-proBNP 及超声心动图和心磁成像。\n\n"
-                                "以上内容仅供科研与辅助决策参考，不能替代临床医生的个体化判断。"
-                            )
-                        else:
-                            st.success(
-                                "模型提示患者目前为 **临床恶化低危**。\n\n"
-                                "建议：\n"
-                                "- 继续现有治疗和管理方案；\n"
-                                "- 按既定计划定期随访，复查 6MWT、NT-proBNP 和 WHO 心功能分级；\n"
-                                "- 如出现气促加重、晕厥等症状，应及时就诊并重新评估。\n\n"
-                                "以上内容仅供科研与辅助决策参考，不能替代临床医生的个体化判断。"
-                            )
+        # ========= 左列：PH 检测 + 预后 =========
+        with col1:
+            st.markdown("### 📊 肺动脉高压检测结果")
 
-                    except Exception as e:
-                        st.error(f"预后评估计算失败，请检查输入参数：{e}")
-                else:
-                    st.markdown("---")
-                    st.info("当前为 **低风险**，暂不进行临床恶化预后评估。")
+            risk_percent = probability * 100
+            optimal_threshold = 35.703   # 内部高/低风险划分阈值（百分比）
+            youden_index = 0.771
 
-            # ========= 右列：SHAP 瀑布图 =========
-            with col2:
-                st.markdown("### 🔍 SHAP可解释性分析")
-                st.markdown("下图展示了各特征对预测结果的贡献：**红色**条表示增加风险，**蓝色**条表示降低风险。")
-                
-                if final_explanation is not None:
-                    try:
-                        fig, ax = plt.subplots(figsize=(8, 6))
-
-                        plt.rcParams["font.family"] = "sans-serif"
-                        plt.rcParams["font.sans-serif"] = ["SimHei", "DejaVu Sans"]
-                        plt.rcParams["axes.unicode_minus"] = False
-
-                        shap.plots.waterfall(final_explanation, show=False, max_display=10)
-                        fix_shap_minus_signs(ax)
-
-                        plt.tight_layout()
-                        st.pyplot(fig)
-                    except Exception as plot_err:
-                        st.error(f"绘图失败。调试信息: {plot_err}")
-                else:
-                    st.warning("无法生成 SHAP 图，请检查输入数据或模型结构。")
+            if risk_percent > optimal_threshold:
+                color = "#dc3545"
+                risk_label = "高风险"
+                icon = "⚠️"
+                advice_box = "warning"
+                advice_text = (
+                    "模型评估结果为 **高风险**，提示患者当前患肺动脉高压的可能性较高。\n\n"
+                    "**建议：** 建议进一步完善右心导管检查，"
+                    "并结合临床情况进行综合评估。"
+                )
+            else:
+                color = "#28a745"
+                risk_label = "低风险"
+                icon = "✅"
+                advice_box = "success"
+                advice_text = (
+                    "模型评估结果为 **低风险**，提示患者当前患肺动脉高压的可能性较低。\n\n"
+                    "**建议：** 可继续观察、密切随访，根据临床症状和体征决定是否进一步检查。"
+                )
             
-            st.markdown("---")
-            st.caption(
-                f"**说明：** 本工具采用约登指数 (Youden Index = {youden_index}) "
-                f"确定的最佳截断值进行风险分层，结果仅供科研参考。"
+            st.markdown(
+                f"""
+                <div class="report-box" style="text-align: center; border-left: 5px solid {color};">
+                    <h2 style="color: {color}; font-size: 40px; margin: 0;">{icon} {risk_label}</h2>
+                    <p style="color: gray; font-size: 14px; margin-top: 10px;">
+                        本结果仅供科研与辅助决策参考。
+                    </p>
+                </div>
+                """, 
+                unsafe_allow_html=True
             )
-    else:
-        st.error("系统错误：模型未加载。")
+            
+            st.markdown("### 🩺 决策建议")
+            if advice_box == "warning":
+                st.warning(advice_text)
+            else:
+                st.success(advice_text)
+
+            # ---- 第二步：仅在 PH 高风险时进行预后评估 ----
+            if risk_percent > optimal_threshold:
+                st.markdown("---")
+                st.markdown("### 📈 预后评估（临床恶化风险）")
+
+                try:
+                    combined_xbeta, xbeta_step1 = compute_combined_xbeta(
+                        six_mwt or 0.0,
+                        int(who_fc) if who_fc is not None else 1,
+                        ntprobnp or 0.0,
+                        rt_ratio or 0.0
+                    )
+
+                    # 判定高危 / 低危
+                    if combined_xbeta >= PROGNOSIS_THRESHOLD:
+                        prog_label = "高危"
+                        prog_color = "#dc3545"
+                        prog_icon = "⚠️"
+                        prog_box_type = "warning"
+                    else:
+                        prog_label = "低危"
+                        prog_color = "#28a745"
+                        prog_icon = "✅"
+                        prog_box_type = "success"
+
+                    st.markdown(
+                        f"""
+                        <div class="report-box" style="border-left: 5px solid {prog_color};">
+                            <h3 style="color:{prog_color}; margin:0;">{prog_icon} 临床恶化：{prog_label}</h3>
+                            <p style="color: gray; font-size: 13px; margin-top:8px;">
+                                预后评估模型为基于心磁特征参数的联合模型。
+                            </p>
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
+
+                    st.markdown("#### 📌 预后决策建议")
+                    if prog_box_type == "warning":
+                        st.warning(
+                            "模型提示患者存在 **临床恶化高危**。\n\n"
+                            "建议在肺动脉高压专科医生评估下：\n"
+                            "- 密切随访临床症状、体征和 WHO 心功能分级；\n"
+                            "- 考虑强化或调整治疗方案；\n"
+                            "- 缩短随访间隔，定期监测 6MWT、NT-proBNP 及超声心动图和心磁成像。\n\n"
+                            "以上内容仅供科研与辅助决策参考，不能替代临床医生的个体化判断。"
+                        )
+                    else:
+                        st.success(
+                            "模型提示患者目前为 **临床恶化低危**。\n\n"
+                            "建议：\n"
+                            "- 继续现有治疗和管理方案；\n"
+                            "- 按既定计划定期随访，复查 6MWT、NT-proBNP 和 WHO 心功能分级；\n"
+                            "- 如出现气促加重、晕厥等症状，应及时就诊并重新评估。\n\n"
+                            "以上内容仅供科研与辅助决策参考，不能替代临床医生的个体化判断。"
+                        )
+
+                except Exception as e:
+                    st.error(f"预后评估计算失败，请检查输入参数：{e}")
+            else:
+                st.markdown("---")
+                st.info("当前为 **低风险**，暂不进行临床恶化预后评估。")
+
+        # ========= 右列：SHAP 瀑布图 =========
+        with col2:
+            st.markdown("### 🔍 SHAP 可解释性分析")
+            st.markdown("下图展示了各特征对预测结果的贡献：**红色**条表示增加风险，**蓝色**条表示降低风险。")
+            
+            if final_explanation is not None:
+                try:
+                    fig, ax = plt.subplots(figsize=(8, 6))
+
+                    plt.rcParams["font.family"] = "sans-serif"
+                    plt.rcParams["font.sans-serif"] = ["SimHei", "DejaVu Sans"]
+                    plt.rcParams["axes.unicode_minus"] = False
+
+                    shap.plots.waterfall(final_explanation, show=False, max_display=10)
+                    fix_shap_minus_signs(ax)
+
+                    plt.tight_layout()
+                    st.pyplot(fig)
+                except Exception as plot_err:
+                    st.error(f"绘图失败。调试信息: {plot_err}")
+            else:
+                st.warning("无法生成 SHAP 图，请检查输入数据或模型结构。")
+        
+        st.markdown("---")
+        st.caption(
+            f"**说明：** 本工具采用约登指数 (Youden Index = {youden_index}) "
+            f"确定的最佳截断值进行风险分层，结果仅供科研参考。"
+        )
 else:
-    st.info("👈 请在左侧侧边栏输入患者的临床参数，然后点击“预测”按钮。")
-
-
-
-
-
-
-
-
-
+    st.info("👉 请在上方输入患者的参数后，点击“预测”按钮。")
