@@ -427,7 +427,7 @@ if predict_clicked and (model is not None) and (input_df is not None):
                     plt.rcParams["font.sans-serif"] = ["SimHei", "DejaVu Sans"]
                     plt.rcParams["axes.unicode_minus"] = False
 
-                    shap.plots.waterfall(final_explanation, show=False, max_display=10)
+                    shap.plots.waterfall(final_explanation, show=False, max_display=13)
                     fix_shap_minus_signs(ax)
 
                     plt.tight_layout()
@@ -444,6 +444,7 @@ if predict_clicked and (model is not None) and (input_df is not None):
         )
 else:
     st.info("👉 请在上方输入患者的参数后，点击“预测”按钮。")
+
 
 
 
