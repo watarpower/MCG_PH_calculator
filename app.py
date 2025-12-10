@@ -213,7 +213,7 @@ if model is not None and feature_names is not None:
 # 6. 主界面：PH 检测 + SHAP + 预后评估
 # ==========================================
 st.title("🏥 基于心磁成像装置的肺动脉高压风险计算器")
-st.markdown("基于随机森林和Cox回归算法构建")
+# st.markdown("基于随机森林和Cox回归算法构建")
 st.markdown("---")
 
 if st.sidebar.button("🔍 预测"):
@@ -426,6 +426,7 @@ if st.sidebar.button("🔍 预测"):
         st.error("系统错误：模型未加载。")
 else:
     st.info("👈 请在左侧侧边栏输入患者的临床参数，然后点击“预测”按钮。")
+
 
 
 
