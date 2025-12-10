@@ -90,7 +90,15 @@ st.markdown("""
         border: 1px solid #e6e6e6; padding: 20px; background-color: white; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);
     }
     .threshold-info {
-        font-size: 20px; color: #666; text-align: center; margin-top: 5px;
+        font-size: 12px; color: #666; text-align: center; margin-top: 5px;
+    }
+
+    /* ⭐ 调大 st.warning / st.success 内文字和列表字号 */
+    .stAlert p,
+    .stAlert ul,
+    .stAlert li {
+        font-size: 18px;   /* 你也可以改成 18px 试效果 */
+        line-height: 1.6;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -436,6 +444,7 @@ if predict_clicked and (model is not None) and (input_df is not None):
         )
 else:
     st.info("👉 请在上方输入患者的参数后，点击“预测”按钮。")
+
 
 
 
