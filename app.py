@@ -97,7 +97,7 @@ st.markdown("""
     .stAlert p,
     .stAlert ul,
     .stAlert li {
-        font-size: 25px;   /* 你也可以改成 18px 试效果 */
+        font-size: 23px;   /* 你也可以改成 18px 试效果 */
         line-height: 1.6;
     }
     </style>
@@ -444,6 +444,7 @@ if predict_clicked and (model is not None) and (input_df is not None):
         )
 else:
     st.info("👉 请在上方输入患者的参数后，点击“预测”按钮。")
+
 
 
 
