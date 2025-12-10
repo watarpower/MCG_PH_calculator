@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import math
 import joblib
 import shap
 import matplotlib.pyplot as plt
@@ -168,7 +169,7 @@ def load_model_and_features():
 model, feature_names = load_model_and_features()
 
 # ==========================================
-# 5. 标题 & 参数输入（在主区域）
+# 5. 标题 & 参数输入（主区域，3 行 × 5 列）
 # ==========================================
 st.title("🏥 基于心磁成像装置的肺动脉高压风险计算器")
 st.markdown("---")
@@ -181,33 +182,57 @@ input_df = None
 
 if model is not None and feature_names is not None:
     st.subheader("📋 受试者参数录入")
-    st.markdown("请在下方输入心磁和临床特征参数值，然后点击右侧或下方的“预测”按钮。")
+    st.markdown("请在下方输入心磁和临床特征参数值，然后点击下方的“预测”按钮。")
 
-    # 左边：模型特征输入；右边：预后评估 4 项参数
-    input_col, prog_col = st.columns([2, 1])
+    input_data = {}
 
-    with input_col:
-        input_data = {}
-        for feature in feature_names:
+    # ------- 诊断模型特征：按 5 列排版，最多 3 行 -------
+    cols_per_row = 5
+    n_features = len(feature_names)
+    n_rows = math.ceil(n_features / cols_per_row)
+
+    for r in range(n_rows):
+        row_cols = st.columns(cols_per_row)
+        for c in range(cols_per_row):
+            idx = r * cols_per_row + c
+            if idx >= n_features:
+                break
+            feature = feature_names[idx]
             feature_lower = feature.lower()
-            if 'sex' in feature_lower or 'gender' in feature_lower or 'code' in feature_lower:
-                input_data[feature] = st.selectbox(f"{feature} (分类变量)", options=[0, 1], index=0)
-            else:
-                input_data[feature] = st.number_input(f"{feature} (数值)", value=0.0, format="%.2f")
-        input_df = pd.DataFrame([input_data], columns=feature_names)
 
-    with prog_col:
-        st.markdown("#### 🔮 预后评估参数")
-        six_mwt = st.number_input("6分钟步行距离 (6MWT，m)", min_value=0.0, value=0.0, step=1.0)
+            with row_cols[c]:
+                if 'sex' in feature_lower or 'gender' in feature_lower or 'code' in feature_lower:
+                    input_data[feature] = st.selectbox(
+                        f"{feature}",
+                        options=[0, 1],
+                        index=0
+                    )
+                else:
+                    input_data[feature] = st.number_input(
+                        f"{feature}",
+                        value=0.0,
+                        format="%.2f"
+                    )
+
+    input_df = pd.DataFrame([input_data], columns=feature_names)
+
+    # ------- 预后评估参数：单独一行（4 列） -------
+    st.markdown("#### ✨ 预后评估参数")
+    prog_cols = st.columns(4)
+
+    with prog_cols[0]:
+        six_mwt = st.number_input("6分钟步行距离 (6MWT, m)", min_value=0.0, value=0.0, step=1.0)
+    with prog_cols[1]:
         who_fc = st.selectbox("WHO 心功能分级 (1-4)", options=[1, 2, 3, 4], index=0)
+    with prog_cols[2]:
         ntprobnp = st.number_input("NT-proBNP", min_value=0.0, value=0.0, step=1.0)
+    with prog_cols[3]:
         rt_ratio = st.number_input("R波和T波峰值时刻两极磁感应强度差值比值", value=0.0, format="%.2f")
 
-    # 预测按钮放在整行下方，更居中
-    predict_clicked = st.button("🔍 预测")
+    # 预测按钮：居中铺满
+    predict_clicked = st.button("🔍 预测", use_container_width=True)
 else:
     predict_clicked = False
-
 # ==========================================
 # 6. 主界面：PH 检测 + SHAP + 预后评估
 # ==========================================
