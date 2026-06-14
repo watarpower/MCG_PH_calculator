@@ -637,7 +637,7 @@ model, feature_names, display_feature_names = load_model_and_features()
 # 10. 页面标题
 # ==========================================
 
-st.title("🏥 基于心磁成像装置的肺动脉高压风险计算器")
+st.title("🏥 基于心磁成像技术的肺动脉高压患病及临床恶化风险计算器")
 st.markdown("---")
 
 
