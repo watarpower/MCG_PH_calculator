@@ -903,7 +903,7 @@ if predict_clicked and (model is not None) and (input_df is not None):
                 if prog_box_type == "warning":
                     st.warning(
                         "模型提示患者存在 **临床恶化高风险**。\n"
-                        "建议在肺动脉高压专科医生评估下："
+                        "建议在肺动脉高压专科医生评估下：\n"
                         "- 密切随访临床症状、体征及 WHO 心功能分级；\n"
                         "- 定期监测 6MWT、NT-proBNP、超声心动图及心磁成像指标；\n"
                         "- 根据病情考虑优化或调整治疗方案；\n"
