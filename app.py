@@ -16,6 +16,12 @@ try:
 except Exception:
     SHAP_AVAILABLE = False
 
+try:
+    import xgboost as xgb
+    XGB_AVAILABLE = True
+except Exception:
+    XGB_AVAILABLE = False
+
 from sklearn.base import BaseEstimator, TransformerMixin
 
 
@@ -24,7 +30,7 @@ from sklearn.base import BaseEstimator, TransformerMixin
 # ==========================================
 
 st.set_page_config(
-    page_title="基于心磁成像技术的肺动脉高压风险计算器",
+    page_title="基于心磁成像装置的肺动脉高压风险计算器",
     page_icon="🏥",
     layout="wide"
 )
@@ -37,10 +43,7 @@ st.set_page_config(
 MODEL_FILE = "XGB_final_model_package.pkl"
 FEATURE_FILE = "final_selected_features.txt"
 
-# PH检测模型截断值
 PH_DETECTION_THRESHOLD = 0.420199602842331
-
-# 预后联合模型截断值
 PROGNOSIS_THRESHOLD = 0.3202
 
 # 页面显示名 -> 模型内部真实特征名
@@ -53,8 +56,7 @@ MODEL_TO_DISPLAY_NAME = {
     "QTc": "QT间期",
 }
 
-# 如果 final_selected_features.txt 读取失败，使用该兜底特征列表
-# 注意：这里必须使用模型训练时的内部特征名，即 QTc，而不是 QT间期
+# 兜底特征列表：这里必须使用模型训练时的内部特征名，即 QTc
 DEFAULT_MODEL_FEATURES = [
     "QTc",
     "R峰-T峰最大电流矢量强度不匹配指数",
@@ -72,7 +74,7 @@ DEFAULT_MODEL_FEATURES = [
 # 3. 预后评估：两步 Cox 模型
 # ==========================================
 
-# ---------- 第一步：基线 Cox 模型 ----------
+# 第一步：基线 Cox 模型
 # 变量：6MWT、WHO-FC、NT-proBNP
 # WHO-FC 以 I 级为参照
 
@@ -80,16 +82,17 @@ COEF_6MWT = -0.00211921
 COEF_BNP = 0.00043149
 
 FC_COEF_MAP = {
-    1: 0.0,          # WHO-FC I级，参照
-    2: 0.41155628,   # WHO-FC II级
-    3: -0.82986348,  # WHO-FC III级
-    4: -2.1000644,   # WHO-FC IV级
+    1: 0.0,
+    2: 0.41155628,
+    3: -0.82986348,
+    4: -2.1000644,
 }
 
 
 def compute_xbeta_step1(six_mwt: float, who_fc: int, ntprobnp: float) -> float:
     """
     基线 Cox 模型 Xβ：
+
     Xβ_baseline =
     -0.00211921 × 6MWT
     + WHO-FC对应系数
@@ -106,7 +109,7 @@ def compute_xbeta_step1(six_mwt: float, who_fc: int, ntprobnp: float) -> float:
     return float(xbeta_baseline)
 
 
-# ---------- 第二步：联合 Cox 模型 ----------
+# 第二步：联合 Cox 模型
 # 变量：基线模型 Xβ、R峰-T峰两极角度差值、R峰-T峰磁感应强度梯度比值
 
 COEF_BASELINE_XBETA = 0.75531729
@@ -123,6 +126,7 @@ def compute_combined_xbeta(
 ) -> Tuple[float, float]:
     """
     联合 Cox 模型 Xβ：
+
     Xβ_combined =
     0.75531729 × Xβ_baseline
     + 0.01020034 × R峰-T峰两极角度差值
@@ -250,16 +254,16 @@ st.markdown(
 
 
 # ==========================================
-# 6. 防止 joblib 加载 pipeline 报错的类
+# 6. 兼容旧模型 pipeline 的类
 # ==========================================
 
 class DataFrameConverter(BaseEstimator, TransformerMixin):
     """
-    这个类用于兼容旧模型 pipeline 中可能存在的 DataFrameConverter。
+    用于兼容旧模型 pipeline 中可能存在的 DataFrameConverter。
 
-    关键修改：
-    如果输入已经是 DataFrame，必须原样保留列名。
-    否则 XGBoost 会看到 0,1,2...8 这种列名，从而报 feature_names mismatch。
+    关键点：
+    如果输入已经是 DataFrame，必须保留原始列名。
+    否则 XGBoost 可能看到 0,1,2...8 这种列名，并报 feature_names mismatch。
     """
 
     def __init__(self):
@@ -284,12 +288,12 @@ class DataFrameConverter(BaseEstimator, TransformerMixin):
 
 
 # ==========================================
-# 7. 模型与特征加载
+# 7. 工具函数：特征名、模型加载、预测
 # ==========================================
 
 def to_model_feature_name(feature_name: str) -> str:
     """
-    页面或特征文件中的显示名 -> 模型内部真实特征名。
+    页面或 txt 中的显示名 -> 模型内部真实特征名。
     """
     feature_name = str(feature_name).strip()
     return DISPLAY_TO_MODEL_NAME.get(feature_name, feature_name)
@@ -386,25 +390,21 @@ def get_final_estimator(model_obj: Any) -> Any:
 def get_estimator_feature_names(model_obj: Any) -> Optional[List[str]]:
     """
     从模型本身读取训练时的特征名。
-    优先级最高。
+    优先读取 XGBoost booster 的 feature_names。
     """
 
-    # sklearn estimator
-    if hasattr(model_obj, "feature_names_in_"):
-        return [str(x) for x in list(model_obj.feature_names_in_)]
-
-    # sklearn pipeline
+    # 如果是 pipeline，优先看最后一步 XGBoost booster
     if is_sklearn_pipeline(model_obj):
         try:
             final_estimator = model_obj.steps[-1][1]
-
-            if hasattr(final_estimator, "feature_names_in_"):
-                return [str(x) for x in list(final_estimator.feature_names_in_)]
 
             if hasattr(final_estimator, "get_booster"):
                 booster = final_estimator.get_booster()
                 if getattr(booster, "feature_names", None) is not None:
                     return [str(x) for x in booster.feature_names]
+
+            if hasattr(final_estimator, "feature_names_in_"):
+                return [str(x) for x in list(final_estimator.feature_names_in_)]
         except Exception:
             pass
 
@@ -417,6 +417,10 @@ def get_estimator_feature_names(model_obj: Any) -> Optional[List[str]]:
     except Exception:
         pass
 
+    # sklearn estimator
+    if hasattr(model_obj, "feature_names_in_"):
+        return [str(x) for x in list(model_obj.feature_names_in_)]
+
     return None
 
 
@@ -424,7 +428,7 @@ def get_estimator_feature_names(model_obj: Any) -> Optional[List[str]]:
 def load_model_and_features():
     """
     返回：
-    model: 模型
+    model_obj: 模型或 pipeline
     model_features: 传入模型的内部特征名
     display_features: 页面显示的特征名
     """
@@ -446,7 +450,7 @@ def load_model_and_features():
         st.error(f"❌ 模型文件 `{MODEL_FILE}` 加载失败：{e}")
         return None, None, None
 
-    # 1. 优先使用模型训练时的特征名
+    # 1. 优先使用模型训练时保存的特征名
     model_features = get_estimator_feature_names(model_obj)
 
     # 2. 如果模型自身没有，则尝试从 package 读取
@@ -464,7 +468,7 @@ def load_model_and_features():
             st.warning(f"⚠️ `{FEATURE_FILE}` 读取失败：{e}。将使用代码内置的默认特征列表。")
             model_features = DEFAULT_MODEL_FEATURES.copy()
 
-    # 强制将 QT间期 转为 QTc
+    # 强制 QT间期 -> QTc
     model_features = [to_model_feature_name(f) for f in model_features]
 
     # 去重保序
@@ -483,6 +487,7 @@ def prepare_input_for_model(input_df: pd.DataFrame, model_features: List[str]) -
     """
     预测前最后一次校正列名和顺序。
     """
+
     X = input_df.copy()
 
     if "QT间期" in X.columns:
@@ -513,21 +518,18 @@ def predict_probability_safely(model_obj: Any, X_named: pd.DataFrame) -> float:
     """
     安全预测概率。
 
-    先尝试完整模型或pipeline；
-    如果 pipeline 内部把列名改成 0,1,2... 导致 XGBoost 报错，
-    则直接调用最后的 XGBoost estimator，并传入带正确列名的 DataFrame。
+    优先尝试原模型或 pipeline；
+    如果 pipeline 内部导致列名错乱，则尝试直接使用最后的 XGBoost estimator。
     """
 
-    # 1. 先尝试原模型
+    first_error = None
+
     try:
         if hasattr(model_obj, "predict_proba"):
             return float(model_obj.predict_proba(X_named)[0, 1])
-    except Exception as e1:
-        first_error = e1
-    else:
-        first_error = None
+    except Exception as e:
+        first_error = e
 
-    # 2. 如果是 pipeline，尝试最后一个 estimator
     try:
         final_estimator = get_final_estimator(model_obj)
 
@@ -543,11 +545,10 @@ def predict_probability_safely(model_obj: Any, X_named: pd.DataFrame) -> float:
         if first_error is not None:
             raise RuntimeError(
                 f"原模型预测失败：{first_error}\n"
-                f"最终estimator预测也失败：{e2}"
+                f"最终 estimator 预测也失败：{e2}"
             )
         raise e2
 
-    # 3. 如果没有 predict_proba
     try:
         pred = model_obj.predict(X_named)
         pred = np.asarray(pred).ravel()[0]
@@ -561,23 +562,79 @@ def predict_probability_safely(model_obj: Any, X_named: pd.DataFrame) -> float:
         raise e3
 
 
-def transform_through_pipeline(pipeline: Any, X: pd.DataFrame):
-    """
-    SHAP 用：通过 pipeline 的前置转换步骤。
-    """
-    Xt = X
-    for _, step in pipeline.steps[:-1]:
-        if step is None or step == "passthrough":
-            continue
-        Xt = step.transform(Xt)
-    return Xt
+# ==========================================
+# 8. XGBoost 原生 SHAP
+# ==========================================
 
+def compute_xgb_native_shap_explanation(
+    model_obj: Any,
+    X_named: pd.DataFrame,
+    model_features: List[str]
+):
+    """
+    使用 XGBoost 原生 pred_contribs=True 计算 SHAP 贡献值。
+
+    这样可以绕过 shap.TreeExplainer 对某些 XGBoost 保存格式解析失败的问题，
+    例如：could not convert string to float: '[5E-1]'
+    """
+
+    if not XGB_AVAILABLE:
+        raise RuntimeError("当前环境未安装 xgboost，无法计算 XGBoost 原生 SHAP。")
+
+    if not SHAP_AVAILABLE:
+        raise RuntimeError("当前环境未安装 shap，无法绘制 SHAP 图。")
+
+    X_for_model = prepare_input_for_model(X_named, model_features)
+
+    final_estimator = get_final_estimator(model_obj)
+
+    if not hasattr(final_estimator, "get_booster"):
+        raise RuntimeError("当前最终模型不是 XGBoost 模型，无法使用 XGBoost 原生 SHAP。")
+
+    booster = final_estimator.get_booster()
+
+    booster_features = getattr(booster, "feature_names", None)
+
+    if booster_features is not None and len(booster_features) == X_for_model.shape[1]:
+        used_features = [to_model_feature_name(f) for f in booster_features]
+        X_for_model = X_for_model[used_features]
+    else:
+        used_features = [to_model_feature_name(f) for f in model_features]
+        X_for_model = X_for_model[used_features]
+
+    dmatrix = xgb.DMatrix(
+        X_for_model.astype(float),
+        feature_names=used_features
+    )
+
+    contribs = booster.predict(dmatrix, pred_contribs=True)
+
+    # contribs 最后一列为 base value
+    shap_values = contribs[0, :-1]
+    base_value = contribs[0, -1]
+
+    display_names = [to_display_feature_name(f) for f in used_features]
+    data_values = X_for_model.iloc[0].values.astype(float)
+
+    explanation = shap.Explanation(
+        values=shap_values,
+        base_values=base_value,
+        data=data_values,
+        feature_names=display_names
+    )
+
+    return explanation
+
+
+# ==========================================
+# 9. 加载模型
+# ==========================================
 
 model, feature_names, display_feature_names = load_model_and_features()
 
 
 # ==========================================
-# 8. 页面标题
+# 10. 页面标题
 # ==========================================
 
 st.title("🏥 基于心磁成像装置的肺动脉高压风险计算器")
@@ -585,7 +642,7 @@ st.markdown("---")
 
 
 # ==========================================
-# 9. 输入区域
+# 11. 输入区域
 # ==========================================
 
 six_mwt = None
@@ -598,16 +655,6 @@ rt_angle_diff_from_ph_inputs = 0.0
 if model is not None and feature_names is not None and display_feature_names is not None:
     st.subheader("📋 受试者参数录入")
     st.markdown("请在下方输入心磁和临床特征参数值，然后点击下方的“预测”按钮。")
-
-    with st.expander("当前模型配置", expanded=False):
-        config_df = pd.DataFrame({
-            "页面显示名称": display_feature_names,
-            "传入模型的内部特征名": feature_names
-        })
-        st.dataframe(config_df, use_container_width=True)
-        st.write(f"PH 检测模型文件：`{MODEL_FILE}`")
-        st.write(f"PH 检测截断值：`{PH_DETECTION_THRESHOLD}`")
-        st.write(f"预后评估截断值：`{PROGNOSIS_THRESHOLD}`")
 
     if SHAP_AVAILABLE:
         do_shap = st.checkbox(
@@ -644,11 +691,10 @@ if model is not None and feature_names is not None and display_feature_names is 
                     key=f"ph_input_{idx}_{model_feature}"
                 )
 
-    # 这里必须使用模型内部特征名作为 DataFrame 列名
     feature_names_for_model = [to_model_feature_name(f) for f in feature_names]
     input_df = pd.DataFrame([input_data], columns=feature_names_for_model).astype(float)
 
-    # 预后模型中的 R峰-T峰两极角度差值直接引用上方输入
+    # 预后模型中的 R峰-T峰两极角度差值直接引用上方心磁特征输入值
     rt_angle_diff_from_ph_inputs = float(input_data.get("R峰-T峰两极角度差值", 0.0))
 
     st.markdown("---")
@@ -703,7 +749,7 @@ else:
 
 
 # ==========================================
-# 10. 预测与结果展示
+# 12. 预测与结果展示
 # ==========================================
 
 if predict_clicked and (model is not None) and (input_df is not None):
@@ -728,64 +774,12 @@ if predict_clicked and (model is not None) and (input_df is not None):
     if do_shap and SHAP_AVAILABLE:
         with st.spinner("正在计算 SHAP 解释值（可能较慢）..."):
             try:
-                X_for_model = prepare_input_for_model(input_df, feature_names)
-
-                if is_sklearn_pipeline(model):
-                    final_estimator = get_final_estimator(model)
-                    processed = transform_through_pipeline(model, X_for_model)
-
-                    if hasattr(processed, "toarray"):
-                        processed = processed.toarray()
-
-                    if isinstance(processed, pd.DataFrame):
-                        processed_df = processed.copy()
-                    else:
-                        processed_df = pd.DataFrame(processed, columns=feature_names)
-                else:
-                    final_estimator = model
-                    processed_df = X_for_model.copy()
-
-                est_id = id(final_estimator)
-                cache_key = "shap_explainer"
-                cache_id_key = "shap_explainer_est_id"
-
-                if st.session_state.get(cache_id_key) == est_id and cache_key in st.session_state:
-                    explainer = st.session_state[cache_key]
-                else:
-                    try:
-                        explainer = shap.TreeExplainer(final_estimator)
-                    except Exception:
-                        explainer = shap.TreeExplainer(
-                            final_estimator,
-                            data=processed_df,
-                            model_output="probability"
-                        )
-
-                    st.session_state[cache_key] = explainer
-                    st.session_state[cache_id_key] = est_id
-
-                shap_values_obj = explainer(processed_df)
-
-                if hasattr(shap_values_obj, "values"):
-                    if len(shap_values_obj.values.shape) == 3:
-                        shap_contribution = shap_values_obj.values[0, :, 1]
-                        base_val = shap_values_obj.base_values[0, 1]
-                    else:
-                        shap_contribution = shap_values_obj.values[0]
-                        base_val = shap_values_obj.base_values[0]
-
-                    data_vals = X_for_model.iloc[0].values
-                    used_feature_names = [to_display_feature_name(f) for f in feature_names]
-
-                    final_explanation = shap.Explanation(
-                        values=shap_contribution,
-                        base_values=base_val,
-                        data=data_vals,
-                        feature_names=used_feature_names
-                    )
-                    shap_ready = True
-                else:
-                    st.warning("SHAP 计算未返回有效结果。")
+                final_explanation = compute_xgb_native_shap_explanation(
+                    model_obj=model,
+                    X_named=input_df,
+                    model_features=feature_names
+                )
+                shap_ready = True
 
             except Exception as e:
                 st.error(f"SHAP 计算模块出错：{str(e)}")
@@ -940,13 +934,19 @@ if predict_clicked and (model is not None) and (input_df is not None):
                 try:
                     fig, ax = plt.subplots(figsize=(8, 6))
                     plt.sca(ax)
-                    shap.plots.waterfall(final_explanation, show=False, max_display=13)
+
+                    shap.plots.waterfall(
+                        final_explanation,
+                        show=False,
+                        max_display=13
+                    )
 
                     fix_shap_minus_signs(ax)
                     plt.tight_layout()
 
                     st.pyplot(fig)
                     plt.close(fig)
+
                 except Exception as plot_err:
                     st.error(f"SHAP 绘图失败：{plot_err}")
             else:
