@@ -244,7 +244,7 @@ st.markdown(
     /* 输入参数名称字体大小 */
     div[data-testid="stNumberInput"] label,
     div[data-testid="stSelectbox"] label {
-        font-size: 18px !important;
+        font-size: 24px !important;
         font-weight: 600 !important;
         color: #2c3e50 !important;
     }
