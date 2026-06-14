@@ -30,7 +30,7 @@ from sklearn.base import BaseEstimator, TransformerMixin
 # ==========================================
 
 st.set_page_config(
-    page_title="基于心磁成像装置的肺动脉高压风险计算器",
+    page_title="基于心磁成像技术的肺动脉高压患病及临床恶化风险计算器",
     page_icon="🏥",
     layout="wide"
 )
@@ -653,12 +653,12 @@ input_df = None
 rt_angle_diff_from_ph_inputs = 0.0
 
 if model is not None and feature_names is not None and display_feature_names is not None:
-    st.subheader("📋 受试者参数录入")
-    st.markdown("请在下方输入心磁和临床特征参数值，然后点击下方的“预测”按钮。")
+    st.subheader("📋 心磁特征参数录入")
+    st.markdown("请在下方输入心磁特征参数值，然后点击下方的“预测”按钮。")
 
     if SHAP_AVAILABLE:
         do_shap = st.checkbox(
-            "显示 SHAP 解释（较慢，可能占用更多资源）",
+            "显示 SHAP 解释",
             value=False
         )
     else:
@@ -698,17 +698,16 @@ if model is not None and feature_names is not None and display_feature_names is 
     rt_angle_diff_from_ph_inputs = float(input_data.get("R峰-T峰两极角度差值", 0.0))
 
     st.markdown("---")
-    st.markdown("#### ✨ 预后评估参数")
+    st.markdown("#### ✨ 肺动脉高压患者临床参数")
     st.caption(
         "预后评估仅在肺动脉高压检测结果为高风险时展示。"
-        "其中 R峰-T峰两极角度差值直接引用上方心磁特征输入值。"
-    )
+            )
 
     prog_cols = st.columns(4)
 
     with prog_cols[0]:
         six_mwt = st.number_input(
-            "6分钟步行距离 (6MWT, m)",
+            "6分钟步行距离 (m)",
             min_value=0.0,
             value=0.0,
             step=1.0,
@@ -724,7 +723,7 @@ if model is not None and feature_names is not None and display_feature_names is 
 
     with prog_cols[2]:
         ntprobnp = st.number_input(
-            "NT-proBNP",
+            "NT-proBNP (pg/mL)",
             min_value=0.0,
             value=0.0,
             step=1.0,
@@ -929,13 +928,6 @@ if predict_clicked and (model is not None) and (input_df is not None):
                     st.error(f"SHAP 绘图失败：{plot_err}")
             else:
                 st.warning("无法生成 SHAP 图，请检查输入数据或模型结构。")
-
-    st.markdown("---")
-    st.caption(
-        f"说明：肺动脉高压检测模型文件为 `{MODEL_FILE}`，"
-        f"检测截断值为 {PH_DETECTION_THRESHOLD:.6f}；"
-        f"预后评估采用两步 Cox 模型，联合模型 Xβ 截断值为 {PROGNOSIS_THRESHOLD:.4f}。"
-    )
 
 else:
     st.info("👉 请在上方输入患者参数后，点击“预测”按钮。")
