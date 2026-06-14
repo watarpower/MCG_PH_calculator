@@ -885,7 +885,7 @@ if predict_clicked and (model is not None) and (input_df is not None):
                     f"""
                     <div class="report-box" style="text-align: center; border-left: 5px solid {color};">
                         <h3 style="color: {color}; font-size: 36px; margin: 0;">
-                    {icon} {risk_label}
+                    {prog_icon} {prog_label}
                         </h3>                       
                         </p>
                     </div>
