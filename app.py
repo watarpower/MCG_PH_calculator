@@ -43,7 +43,7 @@ FALLBACK_FEATURES = [
 # 1. 页面配置
 # ==========================================
 st.set_page_config(
-    page_title="基于心磁成像装置的肺动脉高压风险计算器",
+    page_title="基于心磁成像技术的肺动脉高压风险计算器",
     page_icon="🏥",
     layout="wide"
 )
