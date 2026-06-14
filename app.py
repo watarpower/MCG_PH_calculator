@@ -738,9 +738,7 @@ if model is not None and feature_names is not None and display_feature_names is 
             step=0.1,
             format="%g"
         )
-
-    st.info(f"预后模型将自动引用上方输入的 R峰-T峰两极角度差值：{rt_angle_diff_from_ph_inputs:g}")
-
+   
     predict_clicked = st.button("🔍 预测", use_container_width=True)
 
 else:
@@ -792,8 +790,6 @@ if predict_clicked and (model is not None) and (input_df is not None):
     with col1:
         st.markdown("### 📊 肺动脉高压检测结果")
 
-        risk_percent = probability * 100
-
         if probability >= PH_DETECTION_THRESHOLD:
             color = "#dc3545"
             risk_label = "肺动脉高压高风险"
@@ -820,12 +816,6 @@ if predict_clicked and (model is not None) and (input_df is not None):
                 <h2 style="color: {color}; font-size: 36px; margin: 0;">
                     {icon} {risk_label}
                 </h2>
-                <p style="font-size: 22px; margin-top: 15px;">
-                    预测概率：<b>{risk_percent:.2f}%</b>
-                </p>
-                <p style="color: gray; font-size: 14px; margin-top: 10px;">
-                    PH检测截断值：{PH_DETECTION_THRESHOLD:.6f}
-                </p>
                 <p style="color: gray; font-size: 13px;">
                     本结果仅供科研与辅助决策参考，不能替代临床医生判断。
                 </p>
@@ -855,12 +845,12 @@ if predict_clicked and (model is not None) and (input_df is not None):
                 )
 
                 if combined_xbeta >= PROGNOSIS_THRESHOLD:
-                    prog_label = "临床恶化高危"
+                    prog_label = "临床恶化高风险"
                     prog_color = "#dc3545"
                     prog_icon = "⚠️"
                     prog_box_type = "warning"
                 else:
-                    prog_label = "临床恶化低危"
+                    prog_label = "临床恶化低风险"
                     prog_color = "#28a745"
                     prog_icon = "✅"
                     prog_box_type = "success"
@@ -870,19 +860,7 @@ if predict_clicked and (model is not None) and (input_df is not None):
                     <div class="report-box" style="border-left: 5px solid {prog_color};">
                         <h3 style="color:{prog_color}; margin:0;">
                             {prog_icon} {prog_label}
-                        </h3>
-                        <p style="font-size: 18px; margin-top:10px;">
-                            基线模型 Xβ：<b>{baseline_xbeta:.4f}</b>
-                        </p>
-                        <p style="font-size: 18px; margin-top:5px;">
-                            联合模型 Xβ：<b>{combined_xbeta:.4f}</b>
-                        </p>
-                        <p style="font-size: 15px; margin-top:5px;">
-                            自动引用的 R峰-T峰两极角度差值：
-                            <b>{rt_angle_diff_from_ph_inputs:g}</b>
-                        </p>
-                        <p style="color: gray; font-size: 13px; margin-top:8px;">
-                            预后分层截断值：{PROGNOSIS_THRESHOLD:.4f}
+                        </h3>                       
                         </p>
                         <p style="color: gray; font-size: 13px;">
                             本结果仅供科研与辅助决策参考，不能替代临床医生判断。
@@ -896,7 +874,7 @@ if predict_clicked and (model is not None) and (input_df is not None):
 
                 if prog_box_type == "warning":
                     st.warning(
-                        "模型提示患者存在 **临床恶化高危**。\n\n"
+                        "模型提示患者存在 **临床恶化高风险**。\n\n"
                         "建议在肺动脉高压专科医生评估下：\n"
                         "- 密切随访临床症状、体征及 WHO 心功能分级；\n"
                         "- 定期监测 6MWT、NT-proBNP、超声心动图及心磁成像指标；\n"
@@ -906,7 +884,7 @@ if predict_clicked and (model is not None) and (input_df is not None):
                     )
                 else:
                     st.success(
-                        "模型提示患者目前为 **临床恶化低危**。\n\n"
+                        "模型提示患者目前为 **临床恶化低风险**。\n\n"
                         "建议：\n"
                         "- 继续现有治疗和管理方案；\n"
                         "- 按计划定期随访，复查 6MWT、NT-proBNP 和 WHO 心功能分级；\n"
