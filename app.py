@@ -219,8 +219,8 @@ st.markdown(
         font-family: sans-serif;
     }
 
-    h3 {
-        color: #34495e;
+    h2, h3 {
+        color: #2c3e50;
         font-family: sans-serif;
     }
 
@@ -280,6 +280,12 @@ st.markdown(
         font-size: 20px;
         line-height: 1.6;
     }
+
+    .compact-divider {
+        border-top: 1px solid #e0e0e0;
+        margin-top: 8px;
+        margin-bottom: 8px;
+    }
     </style>
     """,
     unsafe_allow_html=True
@@ -321,7 +327,7 @@ class DataFrameConverter(BaseEstimator, TransformerMixin):
 
 
 # ==========================================
-# 7. 工具函数：特征名、模型加载、预测
+# 7. 工具函数：特征名、模型加载、pipeline预处理、预测
 # ==========================================
 
 def to_model_feature_name(feature_name: str) -> str:
@@ -412,6 +418,14 @@ def extract_features_from_package(obj: Any) -> Optional[List[str]]:
 
 def is_sklearn_pipeline(obj: Any) -> bool:
     return hasattr(obj, "steps") and isinstance(getattr(obj, "steps", None), list)
+
+
+def is_dataframe_converter_step(step: Any) -> bool:
+    """
+    判断某个 pipeline step 是否为 DataFrameConverter。
+    这里同时用 isinstance 和类名判断，避免 pickle 后类型判断不稳定。
+    """
+    return isinstance(step, DataFrameConverter) or step.__class__.__name__ == "DataFrameConverter"
 
 
 def get_final_estimator(model_obj: Any) -> Any:
@@ -547,52 +561,84 @@ def prepare_input_for_model(input_df: pd.DataFrame, model_features: List[str]) -
     return X
 
 
+def get_pipeline_processed_input(model_obj: Any, X_named: pd.DataFrame) -> Tuple[Any, pd.DataFrame]:
+    """
+    返回最终 estimator 和经过 pipeline 前处理后的输入数据。
+
+    关键：
+    如果模型是 Pipeline，必须执行 RobustScaler 等前处理步骤；
+    不能直接把原始 X_named 传给最后的 XGBoost。
+    """
+
+    X_named = X_named.copy()
+
+    # 非 Pipeline：直接返回原始输入
+    if not is_sklearn_pipeline(model_obj):
+        return model_obj, X_named.astype(float)
+
+    steps = model_obj.steps
+    final_estimator = steps[-1][1]
+
+    Xt = X_named.copy()
+
+    for name, step in steps[:-1]:
+        if step is None or step == "passthrough":
+            continue
+
+        # DataFrameConverter 不做数值变换，跳过，避免列名被改成 0,1,2...
+        if is_dataframe_converter_step(step):
+            continue
+
+        Xt = step.transform(Xt)
+
+        if hasattr(Xt, "toarray"):
+            Xt = Xt.toarray()
+
+    # 经过 RobustScaler 后通常是 numpy array，需要恢复为带原始特征名的 DataFrame
+    if not isinstance(Xt, pd.DataFrame):
+        if np.asarray(Xt).shape[1] != X_named.shape[1]:
+            raise ValueError(
+                "Pipeline 前处理后的特征数量与原始特征数量不一致，"
+                f"原始特征数={X_named.shape[1]}，处理后特征数={np.asarray(Xt).shape[1]}"
+            )
+        Xt = pd.DataFrame(Xt, columns=X_named.columns)
+    else:
+        if Xt.shape[1] == X_named.shape[1]:
+            Xt.columns = X_named.columns
+
+    Xt = Xt[X_named.columns].astype(float)
+
+    return final_estimator, Xt
+
+
 def predict_probability_safely(model_obj: Any, X_named: pd.DataFrame) -> float:
     """
     安全预测概率。
 
-    优先尝试原模型或 pipeline；
-    如果 pipeline 内部导致列名错乱，则尝试直接使用最后的 XGBoost estimator。
+    关键原则：
+    如果模型是 Pipeline，必须执行完整预处理流程。
+    不能直接调用最后的 XGBoost estimator，否则会绕过 RobustScaler，
+    导致网页端预测概率与时间验证队列概率不一致。
     """
 
-    first_error = None
+    X_named = X_named.copy()
 
-    try:
+    # 非 Pipeline：直接预测
+    if not is_sklearn_pipeline(model_obj):
         if hasattr(model_obj, "predict_proba"):
             return float(model_obj.predict_proba(X_named)[0, 1])
-    except Exception as e:
-        first_error = e
 
-    try:
-        final_estimator = get_final_estimator(model_obj)
-
-        if hasattr(final_estimator, "predict_proba"):
-            return float(final_estimator.predict_proba(X_named)[0, 1])
-
-        if hasattr(final_estimator, "predict"):
-            pred = final_estimator.predict(X_named)
-            pred = np.asarray(pred).ravel()[0]
-            return float(pred)
-
-    except Exception as e2:
-        if first_error is not None:
-            raise RuntimeError(
-                f"原模型预测失败：{first_error}\n"
-                f"最终 estimator 预测也失败：{e2}"
-            )
-        raise e2
-
-    try:
         pred = model_obj.predict(X_named)
-        pred = np.asarray(pred).ravel()[0]
-        return float(pred)
-    except Exception as e3:
-        if first_error is not None:
-            raise RuntimeError(
-                f"模型预测失败：{first_error}\n"
-                f"备用预测也失败：{e3}"
-            )
-        raise e3
+        return float(np.asarray(pred).ravel()[0])
+
+    # Pipeline：手动执行前处理，再调用最终 estimator
+    final_estimator, Xt = get_pipeline_processed_input(model_obj, X_named)
+
+    if hasattr(final_estimator, "predict_proba"):
+        return float(final_estimator.predict_proba(Xt)[0, 1])
+
+    pred = final_estimator.predict(Xt)
+    return float(np.asarray(pred).ravel()[0])
 
 
 # ==========================================
@@ -607,8 +653,9 @@ def compute_xgb_native_shap_explanation(
     """
     使用 XGBoost 原生 pred_contribs=True 计算 SHAP 贡献值。
 
-    这样可以绕过 shap.TreeExplainer 对某些 XGBoost 保存格式解析失败的问题，
-    例如：could not convert string to float: '[5E-1]'
+    注意：
+    如果模型是 Pipeline，必须先经过 RobustScaler 等前处理；
+    否则 SHAP 解释和实际预测概率不一致。
     """
 
     if not XGB_AVAILABLE:
@@ -617,9 +664,12 @@ def compute_xgb_native_shap_explanation(
     if not SHAP_AVAILABLE:
         raise RuntimeError("当前环境未安装 shap，无法绘制 SHAP 图。")
 
-    X_for_model = prepare_input_for_model(X_named, model_features)
+    X_raw = prepare_input_for_model(X_named, model_features)
 
-    final_estimator = get_final_estimator(model_obj)
+    final_estimator, Xt = get_pipeline_processed_input(
+        model_obj=model_obj,
+        X_named=X_raw
+    )
 
     if not hasattr(final_estimator, "get_booster"):
         raise RuntimeError("当前最终模型不是 XGBoost 模型，无法使用 XGBoost 原生 SHAP。")
@@ -628,15 +678,15 @@ def compute_xgb_native_shap_explanation(
 
     booster_features = getattr(booster, "feature_names", None)
 
-    if booster_features is not None and len(booster_features) == X_for_model.shape[1]:
+    if booster_features is not None and len(booster_features) == Xt.shape[1]:
         used_features = [to_model_feature_name(f) for f in booster_features]
-        X_for_model = X_for_model[used_features]
+        Xt = Xt[used_features]
+        X_raw = X_raw[used_features]
     else:
-        used_features = [to_model_feature_name(f) for f in model_features]
-        X_for_model = X_for_model[used_features]
+        used_features = list(Xt.columns)
 
     dmatrix = xgb.DMatrix(
-        X_for_model.astype(float),
+        Xt.astype(float),
         feature_names=used_features
     )
 
@@ -647,7 +697,9 @@ def compute_xgb_native_shap_explanation(
     base_value = contribs[0, -1]
 
     display_names = [to_display_feature_name(f) for f in used_features]
-    data_values = X_for_model.iloc[0].values.astype(float)
+
+    # 图中显示原始输入值，而不是 RobustScaler 后的值，更便于临床理解
+    data_values = X_raw.iloc[0].values.astype(float)
 
     explanation = shap.Explanation(
         values=shap_values,
@@ -671,6 +723,7 @@ model, feature_names, display_feature_names = load_model_and_features()
 # ==========================================
 
 st.title("🏥 基于心磁成像技术的肺动脉高压患病及临床恶化风险计算器")
+
 
 # ==========================================
 # 11. 输入区域
@@ -729,9 +782,7 @@ if model is not None and feature_names is not None and display_feature_names is 
     rt_angle_diff_from_ph_inputs = float(input_data.get("R峰-T峰两极角度差值", 0.0))
 
     st.markdown("#### ✨ 肺动脉高压患者临床参数")
-    st.caption(
-        "预后评估仅在肺动脉高压检测结果为高风险时展示。"
-            )
+    st.caption("预后评估仅在肺动脉高压检测结果为高风险时展示。")
 
     prog_cols = st.columns(4)
 
@@ -767,7 +818,7 @@ if model is not None and feature_names is not None and display_feature_names is 
             step=0.1,
             format="%g"
         )
-   
+
     predict_clicked = st.button("🔍 预测", use_container_width=True)
 
 else:
@@ -845,7 +896,6 @@ if predict_clicked and (model is not None) and (input_df is not None):
                 <h2 style="color: {color}; font-size: 36px; margin: 0;">
                     {icon} {risk_label}
                 </h2>
-                </p>
             </div>
             """,
             unsafe_allow_html=True
@@ -883,11 +933,10 @@ if predict_clicked and (model is not None) and (input_df is not None):
 
                 st.markdown(
                     f"""
-                    <div class="report-box" style="text-align: center; border-left: 5px solid {color};">
-                        <h3 style="color: {color}; font-size: 36px; margin: 0;">
-                    {prog_icon} {prog_label}
-                        </h3>                       
-                        </p>
+                    <div class="report-box" style="text-align: center; border-left: 5px solid {prog_color};">
+                        <h3 style="color: {prog_color}; font-size: 36px; margin: 0;">
+                            {prog_icon} {prog_label}
+                        </h3>
                     </div>
                     """,
                     unsafe_allow_html=True
