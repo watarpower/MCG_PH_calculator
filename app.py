@@ -241,22 +241,31 @@ st.markdown(
         box-shadow: 0 2px 4px rgba(0,0,0,0.05);
     }
 
-    /* 输入参数名称字体大小 */
+    /* number_input 和 selectbox 的参数名称 */
     div[data-testid="stNumberInput"] label,
-    div[data-testid="stSelectbox"] label {
-        font-size: 50px !important;
+    div[data-testid="stNumberInput"] label *,
+    div[data-testid="stSelectbox"] label,
+    div[data-testid="stSelectbox"] label * {
+        font-size: 20px !important;
         font-weight: 600 !important;
         color: #2c3e50 !important;
+        line-height: 1.4 !important;
     }
 
-    /* 输入框内数字字体大小 */
+    /* 输入框内数字 */
     div[data-testid="stNumberInput"] input {
-        font-size: 18px !important;
+        font-size: 20px !important;
         font-weight: 500 !important;
     }
 
-    /* 下拉框字体大小，例如 WHO 心功能分级 */
-    div[data-testid="stSelectbox"] div {
+    /* selectbox 当前显示值 */
+    div[data-testid="stSelectbox"] div[data-baseweb="select"] * {
+        font-size: 20px !important;
+    }
+
+    /* checkbox文字，例如“显示SHAP解释” */
+    div[data-testid="stCheckbox"] label,
+    div[data-testid="stCheckbox"] label * {
         font-size: 18px !important;
     }
 
