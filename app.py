@@ -845,8 +845,6 @@ if predict_clicked and (model is not None) and (input_df is not None):
                 <h2 style="color: {color}; font-size: 36px; margin: 0;">
                     {icon} {risk_label}
                 </h2>
-                <p style="color: gray; font-size: 13px;">
-                    本结果仅供科研与辅助决策参考，不能替代临床医生判断。
                 </p>
             </div>
             """,
@@ -890,9 +888,6 @@ if predict_clicked and (model is not None) and (input_df is not None):
                             {prog_icon} {prog_label}
                         </h3>                       
                         </p>
-                        <p style="color: gray; font-size: 13px;">
-                            本结果仅供科研与辅助决策参考，不能替代临床医生判断。
-                        </p>
                     </div>
                     """,
                     unsafe_allow_html=True
@@ -907,7 +902,7 @@ if predict_clicked and (model is not None) and (input_df is not None):
                         "- 密切随访临床症状、体征及 WHO 心功能分级；\n"
                         "- 定期监测 6MWT、NT-proBNP、超声心动图及心磁成像指标；\n"
                         "- 根据病情考虑优化或调整治疗方案；\n"
-                        "- 必要时缩短随访间隔。\n"
+                        "- 必要时缩短随访间隔。\n\n"
                         "以上内容仅供科研与辅助决策参考。"
                     )
                 else:
