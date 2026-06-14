@@ -241,6 +241,30 @@ st.markdown(
         box-shadow: 0 2px 4px rgba(0,0,0,0.05);
     }
 
+    /* 输入参数名称字体大小 */
+    div[data-testid="stNumberInput"] label,
+    div[data-testid="stSelectbox"] label {
+        font-size: 18px !important;
+        font-weight: 600 !important;
+        color: #2c3e50 !important;
+    }
+
+    /* 输入框内数字字体大小 */
+    div[data-testid="stNumberInput"] input {
+        font-size: 18px !important;
+        font-weight: 500 !important;
+    }
+
+    /* 下拉框字体大小，例如 WHO 心功能分级 */
+    div[data-testid="stSelectbox"] div {
+        font-size: 18px !important;
+    }
+
+    /* 普通说明文字 */
+    .stMarkdown p {
+        font-size: 17px;
+    }
+
     .stAlert p,
     .stAlert ul,
     .stAlert li {
