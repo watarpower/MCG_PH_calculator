@@ -5,5 +5,6 @@ scikit-learn==1.6.1
 shap
 matplotlib
 joblib
-
-
+xgboost
+requests
+openpyxl
