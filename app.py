@@ -671,8 +671,6 @@ model, feature_names, display_feature_names = load_model_and_features()
 # ==========================================
 
 st.title("🏥 基于心磁成像技术的肺动脉高压患病及临床恶化风险计算器")
-st.markdown("---")
-
 
 # ==========================================
 # 11. 输入区域
@@ -730,7 +728,6 @@ if model is not None and feature_names is not None and display_feature_names is 
     # 预后模型中的 R峰-T峰两极角度差值直接引用上方心磁特征输入值
     rt_angle_diff_from_ph_inputs = float(input_data.get("R峰-T峰两极角度差值", 0.0))
 
-    st.markdown("---")
     st.markdown("#### ✨ 肺动脉高压患者临床参数")
     st.caption(
         "预后评估仅在肺动脉高压检测结果为高风险时展示。"
@@ -864,7 +861,6 @@ if predict_clicked and (model is not None) and (input_df is not None):
 
         # 仅在 PH 高风险时展示预后评估
         if probability >= PH_DETECTION_THRESHOLD:
-            st.markdown("---")
             st.markdown("### 📈 临床恶化预后评估")
 
             try:
@@ -906,12 +902,12 @@ if predict_clicked and (model is not None) and (input_df is not None):
 
                 if prog_box_type == "warning":
                     st.warning(
-                        "模型提示患者存在 **临床恶化高风险**。\n\n"
-                        "建议在肺动脉高压专科医生评估下：\n"
+                        "模型提示患者存在 **临床恶化高风险**。\n"
+                        "建议在肺动脉高压专科医生评估下："
                         "- 密切随访临床症状、体征及 WHO 心功能分级；\n"
                         "- 定期监测 6MWT、NT-proBNP、超声心动图及心磁成像指标；\n"
                         "- 根据病情考虑优化或调整治疗方案；\n"
-                        "- 必要时缩短随访间隔。\n\n"
+                        "- 必要时缩短随访间隔。\n"
                         "以上内容仅供科研与辅助决策参考。"
                     )
                 else:
@@ -928,7 +924,6 @@ if predict_clicked and (model is not None) and (input_df is not None):
                 st.error(f"预后评估计算失败，请检查输入参数：{e}")
 
         else:
-            st.markdown("---")
             st.info("当前肺动脉高压检测结果为 **低风险**，暂不进行临床恶化预后评估。")
 
     with col2:
