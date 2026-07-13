@@ -2,7 +2,7 @@
 
 import math
 from typing import Any, List, Tuple, Optional
-
+import sys
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -324,7 +324,11 @@ class DataFrameConverter(BaseEstimator, TransformerMixin):
             return pd.DataFrame(arr, columns=cols)
 
         return pd.DataFrame(arr)
-
+        
+for module_name in ("main", "__main__"):
+    module = sys.modules.get(module_name)
+    if module is not None:
+        setattr(module, "DataFrameConverter", DataFrameConverter)
 
 # ==========================================
 # 7. 工具函数：特征名、模型加载、pipeline预处理、预测
