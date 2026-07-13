@@ -44,7 +44,7 @@ MODEL_FILE = "XGB_final_model_package.pkl"
 FEATURE_FILE = "final_selected_features.txt"
 
 PH_DETECTION_THRESHOLD = 0.420199602842331
-PROGNOSIS_THRESHOLD = -0.7202
+PROGNOSIS_THRESHOLD = 0.7202
 #PROGNOSIS_THRESHOLD = 0.3202
 
 # 页面显示名 -> 模型内部真实特征名
